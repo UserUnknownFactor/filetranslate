@@ -1,0 +1,4 @@
+include filetranslate/game_regexps.csv
+include README.md
+include LICENSE
+include requirements.txt

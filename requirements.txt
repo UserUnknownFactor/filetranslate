@@ -1,0 +1,12 @@
+urllib3
+numpy
+chardet
+requests
+beautifulsoup4
+python_magic
+diskcache
+gitpython
+googletrans
+truecase
+kakasi
+fugashi

@@ -1,0 +1,4 @@
+.backup/
+.vscode/
+__pycache__/
+translation_out/
