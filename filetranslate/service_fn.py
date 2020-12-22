@@ -75,7 +75,7 @@ def read_csv_dict(fn, ftype=DIALECT_TRANSLATION, replace_cr=USE_CR_REPLACER):
     if os.path.isfile(fn):
         with open(fn, 'r', newline='', encoding=CSV_ENCODING) as f:
             # the function will ignore columns after second
-            return {item[0]: item[1] for item in csv.reader(preprocess_in(f, replace_cr), ftype)}
+            return {item[0]: item[1] for item in csv.reader(preprocess_in(f, replace_cr), ftype) if len(item) > 1}
     else:
         return dict()
 

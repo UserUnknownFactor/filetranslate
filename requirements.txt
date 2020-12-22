@@ -8,5 +8,6 @@ diskcache
 gitpython
 googletrans
 truecase
-kakasi
+pykakasi
 fugashi
+colorama

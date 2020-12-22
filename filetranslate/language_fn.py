@@ -56,7 +56,7 @@ kana_jpn = """
 
 SPACE_JP = '\u3000'
 KANA_SFX = "あぁ うぅ おぉ いぃ えぇ ぶっ".replace(' ','')
-PUNCTUATION_JP = SPACE_JP + "… 。 ？ ！ ～".replace(' ','') #、
+PUNCTUATION_JP = SPACE_JP + "、 … 。 ？ ！ ～".replace(' ','') #、
 KANA_SFX_RE = re.compile(r'\b[%s%s]+\b' % (KANA_SFX, PUNCTUATION_JP), re.U)
 
 def is_sfx(astring):
@@ -89,6 +89,8 @@ def is_in_language(string, lang):
             i += 1
     elif lang == "EN" or lang == "EN_ALL": # English
         return EN_LETTERS_RE.search(string) is not None
+    elif lang == "SKIP":
+        return True
     return False
 
 def tokenize_japanese(text):
@@ -98,3 +100,40 @@ def tokenize_japanese(text):
     #all_words
     for item in result:
         item['orig']
+
+def chunk(seq, num):
+    avg = len(seq) / float(num)
+    out = []
+    last = 0.0
+
+    while last < len(seq):
+        out.append(seq[int(last):int(last + avg)])
+        last += avg
+
+    return out
+
+def is_incomplete(text, lang='JA'):
+    if lang == 'JA':
+        if '、' in text[-1:]:
+            return True
+    return False
+
+def split_n(text, p=3):
+    words = list(text.split())
+    lw = len(words)
+    nw = lw // p + (lw % p > 0)
+
+    lines= []
+    i = 0
+    current = ''
+
+    for word in words:
+        if i % nw == 0:
+            if i > 0:
+                lines.append(current)
+            current = word
+        else:
+            current += " " + word
+        i += 1
+    lines.append(current)
+    return lines
