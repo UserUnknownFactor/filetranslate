@@ -14,13 +14,20 @@ from maxcolor import MaxColor
 from language_fn import *
 from service_fn import *
 
-USE_COLORAMA = False
-try:
-    from colorama import init, Fore, Style
-    init()
-    USE_COLORAMA = True
-except:
-    pass
+#from multiprocessing import Process
+
+ENABLE_PROFILER = False
+if ENABLE_PROFILER:
+    import cProfile
+    def profile_func(origin_func, *args, **kwargs):
+        with cProfile.Profile() as prof:
+            ret = prof.runcall(origin_func, *args, **kwargs)
+            prof.print_stats()
+            return ret
+else:
+    def profile_func(origin_func, *args, **kwargs):
+        return origin_func(*args, **kwargs)
+
 
 MAX_BORDER_TAGS = 4
 MIN_INFILE_INTERSECTIONS = 2
@@ -30,7 +37,11 @@ COMMENT_TAG = "//"
 ENABLE_CACHE = False
 cache = None
 CACHE_EXPIRY_TIME = 3*24*60*60
+TRANSLATION_BAN_DELAY = 30 * 60
 CACHE_MIN_TEXT_LENGTH = 2
+
+USE_GIT = False
+GIT_AUTHOR = None
 
 import hashlib
 md5 = hashlib.md5
@@ -43,8 +54,6 @@ except ImportError:
 from ocrspace import OCRspace as OCRservice
 
 MODULE_NAME = "filetranslate"
-USE_GIT = False
-GIT_AUTHOR = None
 try:
     import git
     from git import RemoteProgress
@@ -76,7 +85,7 @@ PROJECT_EXT = ".project"
 GIT_INCLUDE_FILES = ["*.csv", "*.project", "*.svg"]
 EXLUDED_DIRS = set([".git",".vscode",".backup", "__pycache__", "[Originals]", DEFAULT_OUT_DIR])
 
-#
+# processing RegExps
 PUNCTUATION_OTHER = ' "\t\u0020\u3000/\\'
 PUNCTUATION_OTHER_RE='[' + PUNCTUATION_OTHER + ']*'
 PUNCTUATION_JPN_START = '«‘“｛〈《「' #［『【
@@ -93,48 +102,6 @@ STRINGS_NAME = "strings"
 ATTRIBUTES_NAME = "attributes"
 STRINGS_DB_POSTFIX = "_" + STRINGS_NAME + ".csv"
 ATTRIBUTES_DB_POSTFIX = "_" + ATTRIBUTES_NAME + ".csv"
-
-TERMINAL_SIZE = (os.get_terminal_size().columns - 2) if sys.stdin.isatty() else 0
-
-PROGRESS_BAR_LEN = TERMINAL_SIZE - 20
-def print_progress(index, total, type_of_progress=0, start_from=0, end_with=100, title=''):
-    """Prints progress bar.
-
-    index is expected to be 0 based current index.
-    total total number of items.
-    type_of_progress type of progress indicator element
-    start_from starting percent
-    end_with ending percent
-    title header of the progreeebar
-    """
-    if TERMINAL_SIZE == 0:
-        return
-
-    if index > total: index = total
-    elif index < 0: index = 0
-
-    if start_from > total - 1 or start_from < 0: start_from = 0
-    if end_with > 100 or end_with < 0: end_with = 100
-
-    percent_done = end_with * (index+1) / (total+1)
-    done = start_from + round((1 - start_from/end_with) * percent_done/(end_with/PROGRESS_BAR_LEN))
-    done_str = None
-    if type_of_progress == 0 or not USE_COLORAMA:
-        done_str = '█' * int(done)
-    elif type_of_progress == 1:
-        done_str = Fore.LIGHTBLUE_EX + '█' * int(done) + Style.RESET_ALL
-    elif type_of_progress == 2:
-        done_str = Fore.LIGHTCYAN_EX + '█' * int(done) + Style.RESET_ALL
-    elif type_of_progress == 3:
-        done_str = Fore.LIGHTBLACK_EX + '█' * int(done) + Style.RESET_ALL
-    elif type_of_progress == 4:
-        done_str = Fore.BLUE + '█' * int(done) + Style.RESET_ALL
-    togo_str = '░' * int(PROGRESS_BAR_LEN - done)
-
-    print((f'{title}:' if title else '') + f'[{done_str}{togo_str}] {round(start_from+percent_done, 1)}% done', end='\r', flush=True)
-
-    if end_with == 100 and round(percent_done) >= end_with:
-        print((' '  * (TERMINAL_SIZE-2)),  end='\r', flush=True) # cleanup line
 
 def tag_hash(string, str_enc="utf-8", hash_len=7):
     """ Generates short English tags for MTL from any kind of string.
@@ -243,7 +210,11 @@ def string_from_indexed_array_item(indexed_array_item, to_original=False):
     if to_original:
         if len(indexed_array_item[3]) == 1:
             return ''.join(filter(None, indexed_array_item[3][0]))
-        return '\n'.join(''.join(filter(None, i)) for i in indexed_array_item[3]) + '\n' # we capture full lines so the last line should be \n terminated too
+        ending = '' # if we capture full lines the last line should be \n terminated too
+        if indexed_array_item[2] and indexed_array_item[2][-1:] == '\n':
+            #print(indexed_array_item[2][-1:])
+            ending = '\n'
+        return '\n'.join(''.join(filter(None, i)) for i in indexed_array_item[3]) + ending
     return '\n'.join(i[1].strip() for i in indexed_array_item[3] if i[1] is not None)
 
 
@@ -376,7 +347,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                     replacer = '' if (dict_line[1] == None) else dict_line[1]
                     repl_line = re.sub(dict_line[0], replacer, repl_line, flags=re.U)#|re.I|re.M)
 
-                # TODO: Additional replacements should be done in a translation service class
+                # NOTE: Additional replacements should be done in a translation service class
                 # or with translation_in. Batch translation in parts below max_chars:
                 repl_line_len = len(repl_line)
                 is_last = (changed_lines >= (num_lines - 1))
@@ -403,7 +374,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 if changed_lines % progress_divisor == 0:
                     print_progress(changed_lines, num_lines, type_of_progress=((1 if type_str else 2) if ttype > 0 else 3), start_from=2, end_with=98)
 
-        # translation result should be preprocessed for proper line count in the MT class or hasattr override
+        # NOTE: translation should be checked for proper line count in the MT class or its override
         if not len(translated):
             print_progress(100, 100)
             return False
@@ -569,12 +540,14 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
                         sep_attrs = self.re_a_sep.findall(att_str)
                         if sep_attrs:
                             for sep_a in sep_attrs:
-                                if len(sep_a):
+                                if len(sep_a) and not (self.re_excl and self.re_excl.search(sep_a)):
                                     attributes[sep_a] = ''
                         else:
-                            attributes[att_str] = ''
+                            if not (self.re_excl and self.re_excl.search(att_str)):
+                                attributes[att_str] = ''
                     else:
-                        attributes[att_str] = ''
+                        if not (self.re_excl and self.re_excl.search(att_str)):
+                            attributes[att_str] = ''
                     j += 1
                 att_str = next(match_groups, None)
 
@@ -592,12 +565,13 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
                         if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
                             string_tags[tag] = tag_hash(tag)
 
-                strings.append(text_str)
+                if not (self.re_excl and self.re_excl.search(text_str)):
+                    strings.append(text_str)
 
-                if self.has_context:
-                    ctx = match.group("context")
-                    contexts.append(ctx if ctx else '')
-                j += 1
+                    if self.has_context:
+                        ctx = match.group("context")
+                        contexts.append(ctx if ctx else '')
+                    j += 1
 
     if len(attributes) == 0 and len(strings) == 0: return False
     write_csv(onlyName, attributes, False, upgrade)
@@ -958,6 +932,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
         return False
 
     print_progress(0, 100)
+    out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
 
     torg_text = u''
     with open(file_name, mode="r", encoding=self.file_enc) as torg:
@@ -1001,6 +976,11 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                     print("Error on previous string line #", forig_t_lines-1, "text: \n", row[1])
                     err_flag = False
 
+                if (mode & 4):
+                    for dict_line in out_dict:
+                        repl = re.compile(dict_line[0])
+                        tmp_str = repl.sub(dict_line[1], tmp_str)
+            
                 if self.escape_dquo_a:
                     tmp_str = tmp_str.replace('"', '\\"')
 
@@ -1021,6 +1001,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                 for i, orig_ln in enumerate(split_torg_text):
                     if orig_ln == '"' or orig_ln == "'": continue
                     if orig_ln == row[0]:
+                        if not tmp_str and mode & 16: break
                         split_torg_text[i] = tmp_str
                         break
                 #last_line_continues = (len(re.findall(re_endline, row[1][-3:])) > 0)
@@ -1028,12 +1009,10 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                     apply_txt = True
 
                 if forig_t_lines % progress_divisor == 0:
-                    print_progress(i, len_split_torg_text, end_with=50)
+                    print_progress(i, len_split_torg_text, end_with=70)
 
         if apply_txt:
             torg_text = ''.join(filter(None, split_torg_text))
-
-    print_progress(50, 100)
 
     apply_att = False
     forig_a_lines = 0
@@ -1120,15 +1099,14 @@ def _applyTranslationsToFile(self, file_name, mode=1):
         torg_text = re.sub(re_a, attr_block_replacer_fn, torg_text)
         if forig_a_lines: apply_att = True
 
-    print_progress(70, 100)
+    print_progress(90, 100)
 
-    if apply_att and (mode & 4):
-        out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
+    if apply_att and (mode & 8):
         for dict_line in out_dict:
             repl = re.compile(dict_line[0])
             torg_text = repl.sub(dict_line[1], torg_text)
 
-    print_progress(90, 100)
+    print_progress(95, 100)
 
     if (apply_txt or apply_att) and torg_text and len(torg_text) > MIN_LENGTH:
         pathOut = os.path.dirname(outputName)
@@ -1245,7 +1223,7 @@ def _archiveRepo(self, fn="filetranslate"):
 class FileTranslate:
     """Game file translation tools.
     """
-    def __init__(self, work_dir, img_exts, file_enc, re_a, re_s, re_t, re_a_sep,
+    def __init__(self, work_dir, img_exts, file_enc, re_a, re_s, re_t, re_a_sep, re_excl,
                  game_dir=None, git_origin='', c_gn=0,
                  has_t=False, has_ct=False, edquo=False, cap_a=False, strip_cmts=True):
 
@@ -1253,6 +1231,7 @@ class FileTranslate:
         self.re_s = re.compile(r'%s' % re_s, re.MULTILINE)
         self.re_t = re.compile(r'%s' % re_t) if re_t else None
         self.re_a_sep = re.compile(r'%s' % re_a_sep) if re_a_sep else None
+        self.re_excl = re.compile(r'%s' % re_excl) if re_excl else None
 
         self.has_text = False
         self.has_context = False
@@ -1294,6 +1273,7 @@ class FileTranslate:
     archiveRepo = _archiveRepo
     revertRepo = _revertRepo
 
+
 def find_files(dir_path: str=None, patterns: [str]=None, exclude_files: [str]=None) -> [str]:
     """Returns a generator yielding files matching the given patterns.
 
@@ -1322,6 +1302,120 @@ def find_files(dir_path: str=None, patterns: [str]=None, exclude_files: [str]=No
                 if exclude_files and any(fnmatch.fnmatch(file_name, p) for p in exclude_files): continue
                 yield os.path.join(root_dir, file_name)
 
+def check_translation_types(original_lines, lang_src, is_seq_strings, not_translit_mode, need_merge):
+    """ Makes array of string line translation types:
+        -1: restore original line or assign empty,
+        0: ignore line,
+        1: one-liner,
+        N >= 2: N-merged lines (including starting)
+    """
+    translation_types = []
+    l_orig = len(original_lines)
+    i = 0
+    while i < l_orig:
+        if original_lines[i].strip() == '' or (
+            not is_in_language(original_lines[i], lang_src)) or (
+            not_translit_mode and is_sfx(original_lines[i])):
+            i += 1
+            translation_types.append(-1)
+            continue
+        line_type = 1
+        j = 0
+        line = ''
+        if need_merge:
+            # in case the last string of the block is incomplete, ignore that
+            prev_full = False
+            while is_seq_strings and (i + j < l_orig):
+                line += original_lines[i + j]
+                if (i + j < l_orig - 1) and is_incomplete(original_lines[i + j], lang_src):
+                    j += 1
+                else:
+                    break
+        if j > 0:
+            original_lines[i] = line
+        lastj = j + 1
+        translation_types.append(lastj)
+        while j > 0:
+            j -= 1
+            translation_types.append(0)
+        i += lastj
+
+    return translation_types
+
+def restore_translation_lines(original_lines, translated_lines, translation_types, not_translit_mode):
+    """ Restores array of translated lines using translation types and actual translation results
+    """
+    translated_lines_all = []
+    l_orig = len(original_lines)
+    i = 0
+    ti = 0
+    while i < l_orig:
+        if translation_types[i] == -1:
+            skip_untranslatable = not_translit_mode# and is_sfx(l_orig_lines[i]))
+            translated_lines_all.append('' if skip_untranslatable else original_lines[i])
+            i += 1
+            continue
+        if ti > (l_orig - 1): # shoudn't be here
+            breakpoint
+            break
+        j = 0
+        if translation_types[i] > 1:
+            if i == l_orig - 1: #shoudn't be here
+                # just in case the last line is partial, merge all N parts into it
+                breakpoint
+                n = ti + translation_types[i]
+                t = ''
+                while ti < len(translated_lines):
+                    t += (' ' + translated_lines[ti])
+                    ti += 1
+                    if ti > n: break
+                translated_lines_all.append(t)
+            else:
+                translated_parts = split_n(translated_lines[ti], translation_types[i])
+                n_split = len(translated_parts)
+                if (n_split == translation_types[i]):
+                    for part in translated_parts:
+                        translated_lines_all.append(part)
+                else: # translator returned too few words: unsplittable >_<
+                    n_split = 0
+                    while (n_split < translation_types[i]):
+                        n_split += 1
+                        translated_lines_all.append('')
+
+            ti += 1
+            j = translation_types[i]
+        elif translation_types[i] == 1:
+            translated_lines_all.append(translated_lines[ti])
+            j = 1
+            ti += 1
+        else: #shoudn't be here
+            breakpoint
+            j = 1
+            ti += 1
+        i += j
+
+    return translated_lines_all
+
+def make_text_to_translate(source_lines, translation_types):
+    """ Returns only lines that need to be translated according to translation_types
+    """
+    filtered_lines = ''
+    l_orig = len(source_lines)
+    for i, line in enumerate(source_lines):
+        if translation_types[i] > 0:
+            filtered_lines += line
+            if i < l_orig - 1:
+                filtered_lines += '\n'
+    return filtered_lines
+
+# ---------------------------------------------- plans -----------------------------------------------
+# TODO:
+# - [x] Exlude strings from adding to translation database by regexp in game_regexps.csv.
+# - [ ] Support for translating raw binary blobs with {fileanme}_raw.csv (format: address=>original=>translation).
+# - [ ] Option to apply string cutting only in -a mode.
+# - [ ] Configuration to enable for string cutting as binary / keep byte-length (partailly done).
+# - [ ] Translation from/to other languages maybe.
+# - [x] Merge N following incomplete sentences to the first incomplete. Check by 、, Make 2 arrays before translation: length of split N + translatable strings T = > N=1 =  nosplit; N=2+ => reset and replace N-1 next strings with remainders from first split N times by nearest space; 0 => skip string translation
 
 # ----------------------------------------------- main -----------------------------------------------
 def main():
@@ -1393,6 +1487,7 @@ def main():
     regroup.add_argument("-ra", help="RegExp for attributes", default='', metavar=("attr_regexp"))
     regroup.add_argument("-rs", help="RegExp for texts", default='', metavar=("text_regexp"))
     regroup.add_argument("-rt", help="RegExp for text tags", default='', metavar=("tag_regexp"))
+    regroup.add_argument("-rex", help="RegExp for text exclusion", default='', metavar=("exc_regexp"))
 
     optgroup = parser.add_argument_group("stage").add_mutually_exclusive_group()
     optgroup.add_argument("-i", help="Inititalize translation files", action="store_true")
@@ -1402,7 +1497,7 @@ def main():
     optgroup.add_argument("-tu", help="Perform translation of new strings", type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument("-fix", help="Revert replacement tags and apply translation_dictionary_out to translation", action="store_true")
     optgroup.add_argument("-cut", help="Add cut-mark character after N-letters", type=int, nargs='?', const=1, default=0, metavar="N")
-    optgroup.add_argument("-a", help="Apply translation to original files (dafault: 1: skip existing, 2:replace, 4:apply dictionary_out; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
+    optgroup.add_argument("-a", help="Apply translation to original files (dafault: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
 
     replgroup = parser.add_argument_group("replacement")
     replgroup.add_argument("-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)", action="store_true")
@@ -1444,6 +1539,7 @@ def main():
     regexp_attr = app_args.ra
     regexp_txt = app_args.rs
     regexp_tag = app_args.rt
+    regexp_excl = app_args.rex
     regexp_attr_sep = None
     lang_src, lang_dest = app_args.lang.split('-')
 
@@ -1459,7 +1555,8 @@ def main():
                         if not regexp_attr: regexp_attr = ars[0]
                         if not regexp_attr_sep: regexp_attr_sep = ars[1] if len(ars) > 1 else None
                         if not regexp_txt: regexp_txt = line[4].replace('\n', '')
-                        if not regexp_tag: regexp_tag = line[5].replace('\n', '')
+                        if len(line) > 5 and not regexp_tag: regexp_tag = line[5].replace('\n', '')
+                        if len(line) > 6 and not regexp_excl: regexp_excl = line[6].replace('\n', '')
                         break
 
     if len(patterns) == 0:
@@ -1507,6 +1604,7 @@ def main():
             Translator.on_finish = on_finish
         if hasattr(Translator, "translate"):
             translate_old = Translator.translate
+            not_translit_mode = False
             def translate_new(self, lines_array, is_seq_strings):
                 text_to_translate = '\n'.join(lines_array) + '\n'
                 if len(text_to_translate.strip()) == 0: return (0, lines_array)
@@ -1529,92 +1627,25 @@ def main():
                 l_orig_lines = text_to_translate.splitlines()
                 l_orig = len(l_orig_lines)
 
-                translation_type = []
-                i = 0
-                while i < l_orig:
-                    if l_orig_lines[i].strip() == '' or not is_in_language(l_orig_lines[i], lang_src):
-                        i += 1
-                        translation_type.append(-1)
-                        continue
-                    line_type = 1
-                    j = 0
-                    line = ''
-                    if do_merge:
-                        # in case the last string of the block is incomplete, ignore that
-                        prev_full = False
-                        while is_seq_strings and (i + j < l_orig):
-                            line += l_orig_lines[i + j]
-                            if (i + j < l_orig - 1) and is_incomplete(l_orig_lines[i + j], lang_src):
-                                j += 1
-                            else:
-                                break
-                    if j > 0:
-                        l_orig_lines[i] = line
-                    lastj = j + 1
-                    translation_type.append(lastj)
-                    while j > 0:
-                        j -= 1
-                        translation_type.append(0)
-                    i += lastj
-
-                text_to_translate = ''
-                for i, line in enumerate(l_orig_lines):
-                    if translation_type[i] > 0:
-                        text_to_translate += line
-                        if i < l_orig - 1:
-                            text_to_translate += '\n'
+                translation_types = check_translation_types(l_orig_lines, lang_src, is_seq_strings, not_translit_mode, do_merge)
+                text_to_translate = make_text_to_translate(l_orig_lines, translation_types)
 
                 #print(PROGRESS_CHAR, end='', flush=True)
                 self.wait()
 
-                transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
+                while True:
+                    try:
+                        transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
+                        break
+                    except Exception as e:
+                        print(str(e), end='\r')
+                        sleep(TRANSLATION_BAN_DELAY)
+
                 tr_txt_len = len(transl_text)
                 transl_text = transl_text.splitlines()
 
                 # restore empty lines
-                i = 0
-                transl_text_full = []
-                ti = 0
-                while i < l_orig:
-                    j = 0
-                    if ti > (l_orig - 1):
-                        raise Exception(f"\nERROR: Mismatch in translated line counts, original={l_orig} new={ti}.")
-                    if translation_type[i] == -1:
-                        transl_text_full.append(l_orig_lines[i])
-                        j = 1
-                    elif translation_type[i] > 1:
-                        if i == l_orig - 1:
-                            n = ti + translation_type[i]
-                            t = ''
-                            while ti < len(transl_text):
-                                t += (' ' + transl_text[ti])
-                                ti += 1
-                                if ti > n: break
-                            transl_text_full.append(t)
-                        else:
-                            translated_parts = split_n(transl_text[ti], translation_type[i])
-                            n_split = len(translated_parts)
-                            if (n_split == translation_type[i]):
-                                for part in translated_parts:
-                                    transl_text_full.append(part)
-                            else: # translator returned too few words: unsplittable, impossiburu >_<
-                                n_split = 0
-                                while (n_split < translation_type[i]):
-                                    n_split += 1
-                                    transl_text_full.append('')
-                            assert (n_split == translation_type[i])
-                        ti += 1
-                        j = translation_type[i]
-                    elif translation_type[i] == 1:
-                        transl_text_full.append(transl_text[ti])
-                        j = 1
-                        ti += 1
-                    else: #shoudn't be here
-                        breakpoint
-                        j = 1
-                        ti += 1
-                    i += j
-
+                transl_text_full = restore_translation_lines(l_orig_lines, transl_text, translation_types, not_translit_mode)
                 l_tran = len(transl_text_full)
                 if l_orig != l_tran:
                     lines = ''
@@ -1622,9 +1653,7 @@ def main():
                     for i, line in enumerate(transl_text_full):
                         try:
                             lines += l_orig_lines[i]
-                            lines += f" -({translation_type[i]})-> "
-                            lines += sent_lines[i]
-                            lines += " -(s)-> "
+                            lines += f" -({translation_types[i]})-> "
                         except: pass
                         lines += line + '\n'
                     with open('error_translations.log', 'w', encoding=CSV_ENCODING) as dtxt: dtxt.write(lines)
@@ -1638,7 +1667,7 @@ def main():
                 return (1, transl_text_full)
             Translator.translate = translate_new
 
-        MT = Translator()
+        MT = Translator(raise_exception=True)
         print("Starting time: {}".format(datetime.datetime.now().strftime("%H:%M %d.%m.%Y")))
 
     OCR = None
@@ -1676,6 +1705,7 @@ def main():
                        file_enc=file_encoding,
                        re_a=regexp_attr, re_s=regexp_txt, re_t=regexp_tag,
                        re_a_sep=regexp_attr_sep,
+                       re_excl = regexp_excl,
                        game_dir=app_args.gd,
                        git_origin=(app_args.url if USE_GIT else ''),
                        strip_cmts=True)
@@ -1773,7 +1803,9 @@ def main():
             else:
                 print("Updating translation of " + base_name + ' ...\n', end='', flush=True)
             res = FT.translateCSV(MT, only_name + ATTRIBUTES_DB_POSTFIX, False, app_args.tu)
+            #print(';', end='', flush=True)
             res = True if FT.translateCSV(MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
+            #res = True if profile_func(translateCSV, MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
         elif app_args.ocr:
             print('')
             print("Performing OCR " + base_name + ' ', end='', flush=True)
