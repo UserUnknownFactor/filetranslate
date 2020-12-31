@@ -22,7 +22,7 @@ with open(path.join(this_directory, 'requirements.txt')) as f: requirements = f.
 
 setup(
     name='filetranslate',
-    version='0.9.7',
+    version='0.9.8',
     url='https://github.com/UserUnknownFactor/filetranslate',
     license='MIT',
     author='UserUnknownFactor',

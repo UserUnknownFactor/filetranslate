@@ -6,6 +6,10 @@ from service_fn import *
 #import tracemalloc
 #tracemalloc.start()
 
+#sys.stdin.reconfigure(encoding='utf-8')
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 class TestServiceFunctions(unittest.TestCase):
 
     indexed_array = [
@@ -70,6 +74,35 @@ class TestServiceFunctions(unittest.TestCase):
     def test_num_groups(self):
         self.assertEqual(num_groups(re.compile('(aaa(bb)(.))(ccc)')), 4)
 
+    original_lines = [ "ああ", "ええと、", "zzz、", "だがありえない！", "ハァッええ", "ハァッええ、","ハァ", "ハァッええ", "ええと、"]
+    translation_types = [1, 3, 0, 0, 1, 2, 0, 1, 1]
+    translated_lines = ["Do this", "Uh, zzz, but it's impossible!", "Huh", "Haa, ha", "Huh", "The end"]
+    translated_lines_match_original = ["Do this", "Uh, zzz,", "but it's", "impossible!", "Huh", "Haa,", "ha", "Huh", "The end"]
+
+    def test_make_translation_types(self):
+        self.assertEqual(check_translation_types(copy.deepcopy(self.original_lines), "JA", True, False, True), self.translation_types)
+        cpy0 = copy.deepcopy(self.original_lines[:-1])
+        cpy0[-1] = "---"
+        cpy0_tl = copy.deepcopy(self.translation_types[:-1])
+        cpy0_tl[-1]= -1 # ignore nontranslatable line
+        self.assertEqual(check_translation_types(cpy0, "JA", True, False, True), cpy0_tl)
+        cpy0_tl = copy.deepcopy(self.translation_types[:-3])
+        cpy0_tl[-1] = 1 # don't split last partial
+        self.assertEqual(check_translation_types(copy.deepcopy(self.original_lines[:-3]), "JA", True, False, True), cpy0_tl)
+
+    def test_build_translated_lines(self):
+        self.assertEqual(restore_translation_lines(
+            self.original_lines, self.translated_lines, self.translation_types, True
+            ), self.translated_lines_match_original)
+        self.original_lines[-2] = "---"
+        self.translation_types[-2]= -1
+        del self.translated_lines[-2] # don't send nontranslatable line to the translator
+        self.translated_lines_match_original[-2] = "---"
+        self.assertEqual(restore_translation_lines(
+            self.original_lines, self.translated_lines, self.translation_types, False
+            ), self.translated_lines_match_original)
+
+# ---------------------------------------------------------------------------------------------------------------------------
 
 """
     def test_split(self):
