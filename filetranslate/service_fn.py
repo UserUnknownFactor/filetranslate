@@ -153,7 +153,7 @@ def print_progress(index, total, type_of_progress=0, start_from=0, end_with=100,
     if start_from > total - 1 or start_from < 0: start_from = 0
     if end_with > 100 or end_with < 0: end_with = 100
 
-    real_percent = (index+1) / (total+1)
+    real_percent = index / total
     percent_range = (end_with - start_from)/100
     percent_done = min(100, start_from + 100 * real_percent *  percent_range)
     done = round(PROGRESS_BAR_LEN * percent_done // 100)
@@ -172,7 +172,7 @@ def print_progress(index, total, type_of_progress=0, start_from=0, end_with=100,
     togo_str = '░' * int(PROGRESS_BAR_LEN - done)
 
     print((f'{title}:' if title else '') + (
-        f'[{done_str}{togo_str}] {round(percent_done, 1)}% done'
+        f'[{done_str}{togo_str}] {round(percent_done, 1)}% done  '
         ), end='\r', flush=True)
 
     if end_with == 100 and round(percent_done) >= end_with:

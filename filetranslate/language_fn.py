@@ -57,6 +57,7 @@ kana_jpn = """
 SPACE_JP = '\u3000'
 KANA_SFX = "あぁ うぅ おぉ いぃ えぇ ぶっ".replace(' ','')
 PUNCTUATION_JP = SPACE_JP + "、 … 。 ？ ！ ～".replace(' ','') #、
+OTHER_JP = "ﾉｼジュ"
 KANA_SFX_RE = re.compile(r'\b[%s%s]+\b' % (KANA_SFX, PUNCTUATION_JP), re.U)
 
 def is_sfx(astring):
@@ -84,7 +85,7 @@ def is_in_language(string, lang):
         i = 0
         while i < len(string):
             # cjk ranges or punctuation characters
-            if any([range["from"] <= ord(string[i]) <= range["to"] for range in ranges]) or (lang == "JA_ALL" and (string[i] in PUNCTUATION_JP)):
+            if any([range["from"] <= ord(string[i]) <= range["to"] for range in ranges]) or string[i] in OTHER_JP or (lang == "JA_ALL" and (string[i] in PUNCTUATION_JP)):
                 return True
             i += 1
     elif lang == "EN" or lang == "EN_ALL": # English

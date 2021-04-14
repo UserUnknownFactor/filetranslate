@@ -102,6 +102,7 @@ STRINGS_NAME = "strings"
 ATTRIBUTES_NAME = "attributes"
 STRINGS_DB_POSTFIX = "_" + STRINGS_NAME + ".csv"
 ATTRIBUTES_DB_POSTFIX = "_" + ATTRIBUTES_NAME + ".csv"
+LOOKBEHIND_LINES = 10
 
 def tag_hash(string, str_enc="utf-8", hash_len=7):
     """ Generates short English tags for MTL from any kind of string.
@@ -245,8 +246,8 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
             if len(cur_tmp) > 0:
                 indexed_array[j][3][k][1] = cur_tmp
             else:
-                skip = True # skip indexed_array items with falied translaions for future retry
-                break
+                #skip = True # skip indexed_array items with falied translaions for future retry
+                continue
 
         i += lines_originally
         indexed_array[j][4] = '' if skip else string_from_indexed_array_item(indexed_array[j], True)
@@ -324,7 +325,11 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 if ENABLE_CACHE:
                     cache.set(file_name, reader_ind, expire=CACHE_EXPIRY_TIME)
 
-            num_lines = sum(1 for row in reader_ind if row[4] is None or len(row[4]) == 0) if upgrade else len(reader_ind)
+            num_lines = 0
+            try:
+                num_lines = sum(1 for row in reader_ind if row[4] is None or len(row[4]) == 0) if upgrade else len(reader_ind)
+            except IndexError as e:
+                raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]}")
             progress_divisor = max(1, num_lines // 1000)
             print_progress(1, 100, type_of_progress=4)
             to_transl = []
@@ -935,8 +940,17 @@ def _applyTranslationsToFile(self, file_name, mode=1):
     out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
 
     torg_text = u''
+    is_win_linenedings = False
+
+    with open(file_name, mode="rb") as torg:
+        if b"\r\n" in torg.read():
+            is_win_linenedings = True
+            #print("found windows newlines")
+
     with open(file_name, mode="r", encoding=self.file_enc) as torg:
         torg_text = torg.read()
+
+    #torg_text = torg_text.decode(self.file_enc)
 
     apply_txt = False
     #onlyName = onlyName.replace(workDir, workDir + "\\translations")
@@ -960,6 +974,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                 split_torg_text = [a for i, a in enumerate(split_torg_text)
                                    if a is not None and (i != self.context_gn and (i+2) % gn != 0)]
 
+            last_pos = 0
             for row in reader:
                 if self.strip_comments and row[0][:len(COMMENT_TAG)] == COMMENT_TAG: continue
                 forig_t_lines += 1
@@ -980,7 +995,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                     for dict_line in out_dict:
                         repl = re.compile(dict_line[0])
                         tmp_str = repl.sub(dict_line[1], tmp_str)
-            
+
                 if self.escape_dquo_a:
                     tmp_str = tmp_str.replace('"', '\\"')
 
@@ -998,11 +1013,15 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                 '''
                 #torg_text = re.sub(re_s, tmp_str, torg_text, 1)
                 #print(match)
-                for i, orig_ln in enumerate(split_torg_text):
+                # don't check all text
+                for i  in range(last_pos, len(split_torg_text)):
+                    orig_ln = split_torg_text[i]
                     if orig_ln == '"' or orig_ln == "'": continue
                     if orig_ln == row[0]:
                         if not tmp_str and mode & 16: break
                         split_torg_text[i] = tmp_str
+                        new_pos =  i-LOOKBEHIND_LINES * re_s.groups
+                        last_pos = max(0,new_pos)
                         break
                 #last_line_continues = (len(re.findall(re_endline, row[1][-3:])) > 0)
                 if not apply_txt:
@@ -1113,6 +1132,8 @@ def _applyTranslationsToFile(self, file_name, mode=1):
         if pathOut != '' and not os.path.exists(pathOut):
             os.makedirs(pathOut, exist_ok=True)
         try:
+            if is_win_linenedings:
+                  torg_text = torg_text.replace("\r\n", "\n").replace("\n", "\r\n")
             torg_text = torg_text.encode(self.file_enc)
         except UnicodeEncodeError as u:
             # pylint: disable=unsubscriptable-object
