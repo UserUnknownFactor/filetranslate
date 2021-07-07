@@ -559,10 +559,13 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
         # find strings
         for match in self.re_s.finditer(content):
             text_str = ''
-            if self.has_text:
-                text_str = match.group("text")
-            else:
-                text_str = match.group(1)
+            try:
+                if self.has_text:
+                    text_str = match.group("text")
+                else:
+                    text_str = match.group(1)
+            except:
+                pass
 
             if len(text_str) > 0 and is_in_language(text_str, lang):
                 if self.re_t:
