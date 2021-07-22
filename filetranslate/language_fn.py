@@ -54,6 +54,7 @@ kana_jpn = """
 ぎょ じょ びょ ぴょ き゚ょ
 """.replace(' ','').replace('\n','')
 
+ALL_JPN_RE= r'(?:[\u3000-\u303F]|[\u3040-\u309F]|[\u30A0-\u30FF]|[\uFF00-\uFFEF]|[\u4E00-\u9FAF]|[\u2605-\u2606]|[\u2190-\u2195]|\u203B)'
 SPACE_JP = '\u3000'
 KANA_SFX = "あぁ うぅ おぉ いぃ えぇ ぶっ".replace(' ','')
 PUNCTUATION_JP = SPACE_JP + "、 … 。 ？ ！ ～".replace(' ','') #、

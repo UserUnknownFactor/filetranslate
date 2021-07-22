@@ -44,7 +44,7 @@ stage:
   -tu                  Perform translation of new strings
   -fix                 Revert replacement tags and apply translation_dictionary_out to translation
   -cut [N]             Add cut-mark character after N-letters
-  -a [mode]            Apply translation to original files (dafault: 1: skip existing, 2:replace, 4:applydictionary_out; can be sum)
+  -a [mode]            Apply translation to original files (dafault: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)
 
 replacement:
   -rit                 Replace text in translations by RegExp (used with -f or both -o and -n options)

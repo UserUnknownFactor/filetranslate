@@ -37,7 +37,7 @@ COMMENT_TAG = "//"
 ENABLE_CACHE = False
 cache = None
 CACHE_EXPIRY_TIME = 3*24*60*60
-TRANSLATION_BAN_DELAY = 30 * 60
+TRANSLATION_BAN_DELAY = 60 * 60
 CACHE_MIN_TEXT_LENGTH = 2
 
 USE_GIT = False
@@ -245,9 +245,9 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
             cur_tmp = tmp[k].strip()
             if len(cur_tmp) > 0:
                 indexed_array[j][3][k][1] = cur_tmp
-            else:
-                #skip = True # skip indexed_array items with falied translaions for future retry
-                continue
+            elif lines_originally == 1:
+                skip = True # skip indexed_array one-liners with falied translaions for future retry
+                break
 
         i += lines_originally
         indexed_array[j][4] = '' if skip else string_from_indexed_array_item(indexed_array[j], True)
@@ -333,6 +333,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             progress_divisor = max(1, num_lines // 1000)
             print_progress(1, 100, type_of_progress=4)
             to_transl = []
+            merging_que_arr = []
             translated = []
             last_size = 0
             changed_lines = 0
@@ -358,21 +359,41 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 is_last = (changed_lines >= (num_lines - 1))
                 # is_over_limit => new size + last size + linebreaks
                 is_over_limit = last_size + repl_line_len + len(to_transl) * 1 >= max_chars
+
+                is_mergeable = []
+                if self.re_mergeque:
+                    is_mergeable = [None] * len(reader_ind[i][3])
+                    for i_ln, s_ln in enumerate(is_mergeable):
+                        print(self.re_mergeque)
+                        is_mergeable[i_ln] = ((
+                                self.re_mergeque.search(reader_ind[i][3][i_ln][1]) >= 0 #check text
+                            ) or (
+                                self.re_mergeque.search(reader_ind[i][3][i_ln][2]) >= 0 # check endtag(s)
+                            ))
+
                 if is_over_limit or is_last:
                     if is_last:
                         if is_over_limit:
-                            ttype, _text = trn_svc.translate(to_transl, type_str and not upgrade)
+                            ttype, _text = trn_svc.translate(to_transl, type_str and not upgrade, merging_que_arr)
                             translated += _text
                             to_transl = [repl_line]
+                            if self.re_mergeque:
+                                merging_que_arr = is_mergeable
                         else:
                             to_transl.append(repl_line)
+                            if self.re_mergeque:
+                                merging_que_arr += is_mergeable
                             last_size += repl_line_len
-                    ttype, _text =  trn_svc.translate(to_transl, type_str and not upgrade)
+                    ttype, _text =  trn_svc.translate(to_transl, type_str and not upgrade, merging_que_arr)
                     translated += _text
                     to_transl = [repl_line]
+                    if self.re_mergeque:
+                        merging_que_arr = is_mergeable
                     last_size = repl_line_len
                 else:
                     to_transl.append(repl_line)
+                    if self.re_mergeque:
+                        merging_que_arr += is_mergeable
                     last_size += repl_line_len
 
                 changed_lines += 1
@@ -996,8 +1017,9 @@ def _applyTranslationsToFile(self, file_name, mode=1):
 
                 if (mode & 4):
                     for dict_line in out_dict:
+                        if len(dict_line[0]) == 0: continue
                         repl = re.compile(dict_line[0])
-                        tmp_str = repl.sub(dict_line[1], tmp_str)
+                        tmp_str = re.sub(repl, dict_line[1], tmp_str)
 
                 if self.escape_dquo_a:
                     tmp_str = tmp_str.replace('"', '\\"')
@@ -1059,6 +1081,11 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                 print("Error on previous attribute line #", forig_t_lines-1, "text: \n", row[1])
                 err_flag = False
 
+            if mode & 8:
+                for dict_line in out_dict:
+                    repl = re.compile(dict_line[0])
+                    row[1] = repl.sub(dict_line[1], row[1])
+
         alines.sort(key=lambda l: len(l[0]), reverse=True)
 
         # quotes can be escaped manually with -rit command line parameter
@@ -1071,7 +1098,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
 
             i, found = next(found_groups, (0, None))
             if self.re_a_sep and self.re_a_sep.search(found):
-                fixed_match = re.sub(self.re_a_sep, individual_attr_replacer_fn, fixed_match)
+                fixed_match = fixed_match.replace(found, re.sub(self.re_a_sep, individual_attr_replacer_fn, found))
             else:
                 text_spans = []
                 current = 0
@@ -1123,7 +1150,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
 
     print_progress(90, 100)
 
-    if apply_att and (mode & 8):
+    if apply_att and (mode & 16):
         for dict_line in out_dict:
             repl = re.compile(dict_line[0])
             torg_text = repl.sub(dict_line[1], torg_text)
@@ -1247,7 +1274,7 @@ def _archiveRepo(self, fn="filetranslate"):
 class FileTranslate:
     """Game file translation tools.
     """
-    def __init__(self, work_dir, img_exts, file_enc, re_a, re_s, re_t, re_a_sep, re_excl,
+    def __init__(self, work_dir, img_exts, file_enc, re_a, re_s, re_t, re_a_sep, re_excl, re_mque,
                  game_dir=None, git_origin='', c_gn=0,
                  has_t=False, has_ct=False, edquo=False, cap_a=False, strip_cmts=True):
 
@@ -1256,6 +1283,7 @@ class FileTranslate:
         self.re_t = re.compile(r'%s' % re_t) if re_t else None
         self.re_a_sep = re.compile(r'%s' % re_a_sep) if re_a_sep else None
         self.re_excl = re.compile(r'%s' % re_excl) if re_excl else None
+        self.re_mergeque = re.compile(r'%s' % re_mque) if re_mque else None
 
         self.has_text = False
         self.has_context = False
@@ -1326,7 +1354,7 @@ def find_files(dir_path: str=None, patterns: [str]=None, exclude_files: [str]=No
                 if exclude_files and any(fnmatch.fnmatch(file_name, p) for p in exclude_files): continue
                 yield os.path.join(root_dir, file_name)
 
-def check_translation_types(original_lines, lang_src, is_seq_strings, not_translit_mode, need_merge):
+def make_translation_types(original_lines, lang_src, is_seq_strings, not_translit_mode, need_merge, merging_que_arr):
     """ Makes array of string line translation types:
         -1: restore original line or assign empty,
         0: ignore line,
@@ -1343,15 +1371,20 @@ def check_translation_types(original_lines, lang_src, is_seq_strings, not_transl
             i += 1
             translation_types.append(-1)
             continue
+
         line_type = 1
         j = 0
         line = ''
         if need_merge:
             # in case the last string of the block is incomplete, ignore that
             prev_full = False
+            there_are_ques = (len(original_lines) == len(merging_que_arr))
             while is_seq_strings and (i + j < l_orig):
                 line += original_lines[i + j]
-                if (i + j < l_orig - 1) and is_incomplete(original_lines[i + j], lang_src):
+                if there_are_ques:
+                    merging_que = merging_que_arr[i + j]
+                incomplete_line = is_incomplete(original_lines[i + j], lang_src)
+                if (i + j < l_orig - 1) and (incomplete_line or (there_are_ques and merging_que)):
                     j += 1
                 else:
                     break
@@ -1440,6 +1473,7 @@ def make_text_to_translate(source_lines, translation_types):
 # - [ ] Configuration to enable for string cutting as binary / keep byte-length (partailly done).
 # - [ ] Translation from/to other languages maybe.
 # - [x] Merge N following incomplete sentences to the first incomplete. Check by 、, Make 2 arrays before translation: length of split N + translatable strings T = > N=1 =  nosplit; N=2+ => reset and replace N-1 next strings with remainders from first split N times by nearest space; 0 => skip string translation
+# - [ ] Detect midsentence token in last characters and end-tags for merging sentences
 
 # ----------------------------------------------- main -----------------------------------------------
 def main():
@@ -1521,7 +1555,7 @@ def main():
     optgroup.add_argument("-tu", help="Perform translation of new strings", type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument("-fix", help="Revert replacement tags and apply translation_dictionary_out to translation", action="store_true")
     optgroup.add_argument("-cut", help="Add cut-mark character after N-letters", type=int, nargs='?', const=1, default=0, metavar="N")
-    optgroup.add_argument("-a", help="Apply translation to original files (dafault: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
+    optgroup.add_argument("-a", help="Apply translation to original files (dafault: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
 
     replgroup = parser.add_argument_group("replacement")
     replgroup.add_argument("-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)", action="store_true")
@@ -1565,6 +1599,7 @@ def main():
     regexp_tag = app_args.rt
     regexp_excl = app_args.rex
     regexp_attr_sep = None
+    regexp_mque = None
     lang_src, lang_dest = app_args.lang.split('-')
 
     if os.path.isfile(regexp_db):
@@ -1581,6 +1616,7 @@ def main():
                         if not regexp_txt: regexp_txt = line[4].replace('\n', '')
                         if len(line) > 5 and not regexp_tag: regexp_tag = line[5].replace('\n', '')
                         if len(line) > 6 and not regexp_excl: regexp_excl = line[6].replace('\n', '')
+                        if len(line) > 7 and not regexp_mque: regexp_mque = line[7].replace('\n', '')
                         break
 
     if len(patterns) == 0:
@@ -1629,7 +1665,7 @@ def main():
         if hasattr(Translator, "translate"):
             translate_old = Translator.translate
             not_translit_mode = False
-            def translate_new(self, lines_array, is_seq_strings):
+            def translate_new(self, lines_array, is_seq_strings=False, merging_que_arr=[]):
                 text_to_translate = '\n'.join(lines_array) + '\n'
                 if len(text_to_translate.strip()) == 0: return (0, lines_array)
 
@@ -1651,7 +1687,7 @@ def main():
                 l_orig_lines = text_to_translate.splitlines()
                 l_orig = len(l_orig_lines)
 
-                translation_types = check_translation_types(l_orig_lines, lang_src, is_seq_strings, not_translit_mode, do_merge)
+                translation_types = make_translation_types(l_orig_lines, lang_src, is_seq_strings, not_translit_mode, do_merge, merging_que_arr)
                 text_to_translate = make_text_to_translate(l_orig_lines, translation_types)
 
                 #print(PROGRESS_CHAR, end='', flush=True)
@@ -1730,6 +1766,7 @@ def main():
                        re_a=regexp_attr, re_s=regexp_txt, re_t=regexp_tag,
                        re_a_sep=regexp_attr_sep,
                        re_excl = regexp_excl,
+                       re_mque = regexp_mque,
                        game_dir=app_args.gd,
                        git_origin=(app_args.url if USE_GIT else ''),
                        strip_cmts=True)
@@ -1770,7 +1807,7 @@ def main():
         if app_args.tdct:
             print("Translating dictionary... ")
         else:
-            print("Updating dictionary translation... ", end='', flush=True)
+            print("Updating dictionary translation... ")
         res = FT.translateCSV(MT, os.path.join(working_dir, DICTIOANRY_FILE), False, app_args.tdctu)
         MT.on_finish()
         return
