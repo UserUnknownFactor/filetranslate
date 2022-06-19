@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(__file__))
 
 import re, argparse, textwrap, html, hashlib, datetime
 import itertools, functools, pathlib, fnmatch
-from shutil import copyfile, move
+from shutil import move#, copyfile
 from time import sleep
 from PIL import Image
 from maxcolor import MaxColor
@@ -153,33 +153,42 @@ def make_array_from_nth_item_and_previous(n, value=None, prev_array=[]):
     ret = [(prev_array[i] if (i < l_old and prev_array[i]) else item) for i, item in enumerate(ret)]
     return ret
 
-
-def separate_tags_and_sentence(sentence, tags=[], unescape=False):
+def separate_tags_and_sentence(sentence, tags=[], unescape=False, all_tags=r''):
     starttag = ''
     endtag = ''
 
-    # we search for up to 3 tags in any sequence at the string borders and move them to the array items
-    all_tags = '(?:(?:' + '|'.join(re.escape(i[0]) for i in tags) + ')[ \u3000]*)+'
+    # we search for up to # tags in any sequence at the string borders 
+    # and move them to the array items
+    if not all_tags:
+        all_tags = '(?:(?:' + '|'.join(
+                re.escape(i[0]) for i in tags if not re.match(f'^[ \u3000]+$', i[0])
+            ) + ')[ \u3000]*)+'
+    for i in tags:
+        # parse alignment spaces if we have them no need to check them elsewhere
+        if re.match(r'^[ \u3000]+$', i[0]) and re.match(f'^{i[0]}', sentence):
+            starttag = i[0]
+            sentence = re.sub(f'^{i[0]}', '', sentence)
+
     for _ in range(MAX_BORDER_TAGS):
         # tags are strings, not regexps, so we escape them
-        starttag_r = re.compile('^'+ PUNCTUATION_JPN_START_RE + all_tags + PUNCTUATION_JPN_START_RE).search(sentence)
+        starttag_r = re.compile('^' + all_tags).search(sentence)
         if starttag_r:
             starttag = starttag + starttag_r[0]
             sentence = sentence.replace(starttag_r[0], '')
             continue
 
-        endtag_r = re.compile(PUNCTUATION_JPN_END_RE + all_tags + PUNCTUATION_JPN_END_RE + '$').search(sentence)
+        endtag_r = re.compile(all_tags + '$').search(sentence)
         if endtag_r:
             endtag = endtag_r[0] + endtag
             sentence = sentence.replace(endtag_r[0], '')
             continue
-
+        
+    for i in tags:
+        if re.match(r'^[ \u3000]+$', i[0]): continue
         if unescape:
-            for i in tags:
-                sentence = sentence.replace(i[0], string_unescape(i[1]))
+            sentence = sentence.replace(i[0], string_unescape(i[1]))
         else:
-            for i in tags:
-                sentence = sentence.replace(i[0], i[1])
+            sentence = sentence.replace(i[0], i[1])
 
     if starttag == '': starttag = None
     if endtag == '': endtag = None
@@ -194,16 +203,26 @@ def separate_tags_and_sentence(sentence, tags=[], unescape=False):
 def split_reader_to_array(reader_array, tags=[]):
     indexed_array = []
     i = 0
+    all_tags_re = '(?:(?:' + '|'.join(
+            re.escape(i[0]) for i in tags if not re.match(f'^[ \u3000]+$', i[0])
+        ) + ')[ \u3000]*)+'
+    print_progress(0, 100)
+    pos = 0
+    old_pos = 0
     for line in reader_array:
         arr = line[0].splitlines()
         l = len(arr) # for easier debugging
         for j, a in enumerate(arr):
-            arr[j] = separate_tags_and_sentence(a, tags)
+            arr[j] = separate_tags_and_sentence(a, tags, all_tags=all_tags_re)
 
         indexed_array.append([i, l, line[0], arr] + line[1:])
         # indexed_array addressing format is thus
         # [item_n][0=index, 1=length, 2=orignial_line, 3=str_arr, 4=translation]([1=string, 0=stag, 2=etag] if str_arr)
         i += 1
+        pos = int(i/len(reader_array)*100)
+        if pos != old_pos:
+            print_progress(pos, 100, 5)
+            old_pos = pos
     return indexed_array
 
 
@@ -250,7 +269,10 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
                 break
 
         i += lines_originally
-        indexed_array[j][4] = '' if skip else string_from_indexed_array_item(indexed_array[j], True)
+        try:
+            indexed_array[j][4] = '' if skip else string_from_indexed_array_item(indexed_array[j], True)
+        except:
+            print("Error in indexed item", indexed_array[j])
 
     return indexed_array
 
@@ -301,7 +323,10 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
         no_translations = False
         untl_lines = []
         with open(file_name, 'r', newline='', encoding=CSV_ENCODING) as f:
-            untl_lines = [len(line) > 1 and len(line[1]) == 0 for line in csv.reader(f, DIALECT_TRANSLATION)]
+            allines = csv.reader(f, DIALECT_TRANSLATION)
+            untl_lines = [bool(
+                    len(line) < 2 or not line[1] or len(line[1]) == 0
+                ) for line in allines]
         if not all(untl_lines) and not upgrade:
             return False
         if not any(untl_lines) and upgrade:
@@ -321,13 +346,13 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 reader_ind = cache.get(file_name)
             if reader_ind is None:
                 #print(TAB_REPLACER, end='', flush=True)
-                reader_ind = split_reader_to_array(csv.reader(f, DIALECT_TRANSLATION), string_tags)
+                reader_ind = split_reader_to_array(list(csv.reader(f, DIALECT_TRANSLATION)), string_tags)
                 if ENABLE_CACHE:
                     cache.set(file_name, reader_ind, expire=CACHE_EXPIRY_TIME)
 
             num_lines = 0
             try:
-                num_lines = sum(1 for row in reader_ind if row[4] is None or len(row[4]) == 0) if upgrade else len(reader_ind)
+                num_lines = sum(1 for row in reader_ind if len(row)>4 and row[4] is None or len(row[4]) == 0) if upgrade else len(reader_ind)
             except IndexError as e:
                 raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]}")
             progress_divisor = max(1, num_lines // 1000)
@@ -338,6 +363,12 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             last_size = 0
             changed_lines = 0
             ttype = 0
+            merge_ender_re = merge_nostarter_re = merge_noendtag_re = None
+            if self.re_mergeque:
+                r = self.re_mergeque.split('||')
+                merge_ender_re = re.compile(r'%s' % r[0]) if len(r)>0 else None
+                merge_nostarter_re = re.compile(r'%s' % r[1]) if len(r)>1 else None
+                merge_noendtag_re = re.compile(r'%s' % r[2]) if len(r)>2 else None
             for row in reader_ind:
                 if len(row[2]) == 0:
                     raise Exception("ERROR: no source text for item", changed_lines)
@@ -345,6 +376,9 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
 
                 i = row[0]
                 repl_line = string_from_indexed_array_item(reader_ind[i])
+                if reader_ind[i][2][:2] == COMMENT_TAG:
+                    repl_line = repl_line[2:]
+                    #continue
                 if upgrade: upgraded_lines.append(i)
 
                 # apply pre-translations from dictionary [jpn] -> [jpn; eng]
@@ -361,15 +395,42 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 is_over_limit = last_size + repl_line_len + len(to_transl) * 1 >= max_chars
 
                 is_mergeable = []
-                if self.re_mergeque:
-                    is_mergeable = [None] * len(reader_ind[i][3])
-                    for i_ln, s_ln in enumerate(is_mergeable):
-                        print(self.re_mergeque)
-                        is_mergeable[i_ln] = ((
-                                self.re_mergeque.search(reader_ind[i][3][i_ln][1]) >= 0 #check text
-                            ) or (
-                                self.re_mergeque.search(reader_ind[i][3][i_ln][2]) >= 0 # check endtag(s)
-                            ))
+                allow_merge = (True if type_str else bool('\n' in repl_line)) and not upgrade
+                mergeable_lines = len(reader_ind[i][3])
+                if self.re_mergeque: #and type_str: # TODO: don't merge attributes?
+                    is_mergeable = [None] * mergeable_lines
+                    #print(self.re_mergeque)
+                    for i_ln in range(mergeable_lines):
+                        item = reader_ind[i][3][i_ln]
+                        # check starttags and text start
+                        if merge_nostarter_re:
+                            def check_intro(idx, in_idx):
+                                if idx + 1 > len(reader_ind) or in_idx + 1 > len(reader_ind[idx][3]): return False
+                                check_item = reader_ind[idx][3][in_idx]
+                                is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (
+                                        merge_nostarter_re.search(check_item[0])))
+                                is_in_text = bool(check_item[1] and merge_nostarter_re.search(check_item[1]))
+                                return (is_in_tag or is_in_text)
+
+                            if check_intro(i, i_ln+1) or check_intro(i+1, 0):
+                                is_mergeable[i_ln] = False
+                                continue
+                         
+                        # check endtag(s)
+                        if (merge_noendtag_re):
+                            if item[2] is not None and len(item[2]) >= 1 and bool(merge_noendtag_re.search(item[2])):
+                                is_mergeable[i_ln] = False
+                                if not type_str: # found blocking endtag in attribute: stop merging everything after
+                                    allow_merge = False
+                                continue
+
+                        # check text
+                        is_mergeable[i_ln] = bool(item[1] and merge_ender_re.search(item[1]))  and allow_merge
+                        if mergeable_lines > 1 and i_ln < len(reader_ind[i][3]) - 1 and not reader_ind[i][3][i_ln+1][1]:
+                            is_mergeable[i_ln] = False # empty next line marks end of the sentence
+                        if not type_str:
+                            if i_ln >= mergeable_lines - 1:
+                                is_mergeable[i_ln] = False # last line of a multiline attribute block
 
                 if is_over_limit or is_last:
                     if is_last:
@@ -502,18 +563,21 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
 
             for i, line in enumerate(str_list):
                 trn = ''
+                is_commented = False
                 if upgrade and old_list:
                     for old_line in old_list:
-                        if line == old_line[0]:
+                        is_commented = (COMMENT_TAG + line) == old_line[0]
+                        if line == old_line[0] or is_commented:
                             trn = old_line[1]
                             if is_string: old_list.remove(old_line)
                             break
 
+                newline = COMMENT_TAG + line if is_commented else line
                 if have_contexts and is_string:
                     # TODO: set other translator columns after context for readability?
-                    writer.writerow([line, trn, contexts[i]])
+                    writer.writerow([newline, trn, contexts[i]])
                 else:
-                    writer.writerow([line, trn])
+                    writer.writerow([newline, trn])
         return True
         #except:
         #    print("ERROR: Cann't access file for writing: " + new_name)
@@ -549,58 +613,60 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
         content = f.read()
 
         # find attributes
-        for match in self.re_a.finditer(content):
-            # check if any of the groups matched
-            match_groups = iter(a for a in match.groups() if a is not None)
-            att_str = next(match_groups, None)
-            while att_str is not None:
-                if len(att_str) == 0:
-                    att_str = next(match_groups, None)
-                    continue
-                if att_str and len(att_str)>0 and is_in_language(att_str, lang) and att_str not in attributes:
-                    if self.re_t:
-                        for tag in self.re_t.findall(att_str):
-                            if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
-                                string_tags[tag] = tag_hash(tag)
-                    if self.re_a_sep:
-                        sep_attrs = self.re_a_sep.findall(att_str)
-                        if sep_attrs:
-                            for sep_a in sep_attrs:
-                                if len(sep_a) and not (self.re_excl and self.re_excl.search(sep_a)):
-                                    attributes[sep_a] = ''
+        if self.re_a:
+            for match in self.re_a.finditer(content):
+                # check if any of the groups matched
+                match_groups = iter(a for a in match.groups() if a is not None)
+                att_str = next(match_groups, None)
+                while att_str is not None:
+                    if len(att_str) == 0:
+                        att_str = next(match_groups, None)
+                        continue
+                    if att_str and len(att_str)>0 and is_in_language(att_str, lang) and att_str not in attributes:
+                        if self.re_t:
+                            for tag in self.re_t.findall(att_str):
+                                if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
+                                    string_tags[tag] = tag_hash(tag)
+                        if self.re_a_sep:
+                            sep_attrs = self.re_a_sep.findall(att_str)
+                            if sep_attrs:
+                                for sep_a in sep_attrs:
+                                    if len(sep_a) and not (self.re_excl and self.re_excl.search(sep_a)):
+                                        attributes[sep_a] = ''
+                            else:
+                                if not (self.re_excl and self.re_excl.search(att_str)):
+                                    attributes[att_str] = ''
                         else:
                             if not (self.re_excl and self.re_excl.search(att_str)):
                                 attributes[att_str] = ''
-                    else:
-                        if not (self.re_excl and self.re_excl.search(att_str)):
-                            attributes[att_str] = ''
-                    j += 1
-                att_str = next(match_groups, None)
+                        j += 1
+                    att_str = next(match_groups, None)
 
         # find strings
-        for match in self.re_s.finditer(content):
-            text_str = ''
-            try:
-                if self.has_text:
-                    text_str = match.group("text")
-                else:
-                    text_str = match.group(1)
-            except:
-                pass
+        if self.re_s:
+            for match in self.re_s.finditer(content):
+                text_str = ''
+                try:
+                    if self.has_text:
+                        text_str = match.group("text")
+                    else:
+                        text_str = match.group(1)
+                except:
+                    pass
 
-            if len(text_str) > 0 and is_in_language(text_str, lang):
-                if self.re_t:
-                    for tag in self.re_t.findall(text_str):
-                        if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
-                            string_tags[tag] = tag_hash(tag)
+                if len(text_str) > 0 and is_in_language(text_str, lang):
+                    if self.re_t:
+                        for tag in self.re_t.findall(text_str):
+                            if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
+                                string_tags[tag] = tag_hash(tag)
 
-                if not (self.re_excl and self.re_excl.search(text_str)):
-                    strings.append(text_str)
+                    if not (self.re_excl and self.re_excl.search(text_str)):
+                        strings.append(text_str)
 
-                    if self.has_context:
-                        ctx = match.group("context")
-                        contexts.append(ctx if ctx else '')
-                    j += 1
+                        if self.has_context:
+                            ctx = match.group("context")
+                            contexts.append(ctx if ctx else '')
+                        j += 1
 
     if len(attributes) == 0 and len(strings) == 0: return False
     write_csv(onlyName, attributes, False, upgrade)
@@ -739,7 +805,7 @@ def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHA
 
 
 def _applyIntersectionAttributes(self, check_type=1, csv_files=[]):
-    intersecta = read_csv_list(os.path.join(self.work_dir, INTERSECTIONS_FILE))
+    intersect_a = read_csv_list(os.path.join(self.work_dir, INTERSECTIONS_FILE))
     if len(csv_files) == 0:
         csv_files = list(find_files(self.work_dir, ['*' + ATTRIBUTES_DB_POSTFIX]))
         if check_type > 1: csv_files += list(find_files(self.work_dir, ['*' + STRINGS_DB_POSTFIX]))
@@ -749,14 +815,23 @@ def _applyIntersectionAttributes(self, check_type=1, csv_files=[]):
         is_changed = False
         for i, line in enumerate(old_attrs):
             index = None
-            try:
-                index = next((i for i, a in enumerate(intersecta) if line[0] == a[0]), None)
-            except Exception as e:
-                print("\nERROR: No original line in file", a_file)
-                raise e
-            if index is not None:
-                old_attrs[i] = [line[0], intersecta[index][1]] + line[2:]
-                is_changed = True
+            for tst_n in range(3):
+                tst_line = line[0]
+                if tst_n == 1: # check for the same uncommented lines
+                    if (tst_line[:2] == COMMENT_TAG):
+                        tst_line = line[0][2:]
+                    else:
+                        continue
+                elif tst_n == 2: # check for the same commented lines
+                    tst_line = COMMENT_TAG + line[0]
+                try:
+                    index = next((i for i, a in enumerate(intersect_a) if tst_line == a[0]), None)
+                except Exception as e:
+                    print("\nERROR: No original line in file", a_file)
+                    raise e
+                if index is not None:
+                    old_attrs[i] = [intersect_a[index][0], intersect_a[index][1]] + line[2:]
+                    is_changed = True
 
         if is_changed:
             print(PROGRESS_CHAR, end='', flush=True)
@@ -774,10 +849,10 @@ def _intersectAttributes(self, check_type=1, csv_files=[]):
     # those are relatively small databases so we can safely load them all to memory
     for a_file in csv_files:
         attr_file_l = read_csv_list(a_file)
-        all_attrs = [i[0] for i in attr_file_l if len(i) > 0 and i[0].strip()]
+        all_attrs = [re.sub(r'^' + COMMENT_TAG, '', i[0]) for i in attr_file_l if len(i) > 0 and i[0].strip()]
         attributes_sets.append(set(all_attrs))
         if check_type > 2:
-            single_file_repeats |= set([i[0] for i in attr_file_l if len(i) > 0 and i[0].strip() and all_attrs.count(i[0]) >= MIN_INFILE_INTERSECTIONS])
+            single_file_repeats |= set([re.sub(r'^' + COMMENT_TAG, '', i[0]) for i in attr_file_l if len(i) > 0 and i[0].strip() and all_attrs.count(re.sub(r'^' + COMMENT_TAG, '', i[0])) >= MIN_INFILE_INTERSECTIONS])
         attributes_lists[a_file] = attr_file_l
 
     intrsec_all = []
@@ -838,7 +913,7 @@ def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None):
         repl_file_l = read_csv_list(repl_file)
         if len(repl_file_l) > 0:
             for i, repl in enumerate(repl_file_l):
-                repl_file_l[i][0] = re.compile(re.escape(repl[0]), re.M|re.U)
+                repl_file_l[i][0] = re.compile(repl[0], re.M|re.U)
         else:
             repl_file_l = None
 
@@ -887,10 +962,13 @@ def _applyFixesToTranslation(self, transl_fn, is_string=True):
             for dict_line in string_tags_dict:
                 fixed = fixed.replace(dict_line[1], dict_line[0])
                 fixed = fixed.replace((dict_line[1][0].upper() + dict_line[1][1:]), dict_line[0])
+                fixed = fixed.replace(dict_line[1].upper(), dict_line[0])
                 fixed = fixed.replace(dict_line[1].lower(), dict_line[0])
                 if len(dict_line[0]) > 2 and (dict_line[1][-1:] in PUNCTUATION_EN):
                     #sometimes MTLs gulp-down punctuation
                     fixed = fixed.replace(dict_line[1][:-1], dict_line[0])
+                    fixed = fixed.replace(dict_line[1].upper()[:-1], dict_line[0])
+                    fixed = fixed.replace(dict_line[1].lower()[:-1], dict_line[0])
 
             # Apply fixes from translation_dictionary_out [eng] -> [eng fixed]
             #    We do it here, not right after translation, to  backup unfixed copy and
@@ -1116,6 +1194,7 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                     prefix = original_match[current:first]
                     if len(prefix): text_spans.append(prefix)
                     item = found
+
                     for row in alines:
                         if item == row[0]: item = row[1]
                     if len(item): text_spans.append(item)
@@ -1278,17 +1357,17 @@ class FileTranslate:
                  game_dir=None, git_origin='', c_gn=0,
                  has_t=False, has_ct=False, edquo=False, cap_a=False, strip_cmts=True):
 
-        self.re_a = re.compile(r'%s' % re_a, re.MULTILINE)
-        self.re_s = re.compile(r'%s' % re_s, re.MULTILINE)
+        self.re_a = re.compile(r'%s' % re_a, re.MULTILINE) if re_a else None
+        self.re_s = re.compile(r'%s' % re_s, re.MULTILINE) if re_s else None
         self.re_t = re.compile(r'%s' % re_t) if re_t else None
         self.re_a_sep = re.compile(r'%s' % re_a_sep) if re_a_sep else None
         self.re_excl = re.compile(r'%s' % re_excl) if re_excl else None
-        self.re_mergeque = re.compile(r'%s' % re_mque) if re_mque else None
+        self.re_mergeque = re_mque if re_mque else None
 
         self.has_text = False
         self.has_context = False
         self.context_gn = 0
-        if self.re_s.groups > 1:
+        if  self.re_s and self.re_s.groups > 1:
             try:
                 #do we have a (?P<context>) group?
                 self.context_gn = self.re_s.groupindex["context"]
@@ -1326,7 +1405,7 @@ class FileTranslate:
     revertRepo = _revertRepo
 
 
-def find_files(dir_path: str=None, patterns: [str]=None, exclude_files: [str]=None) -> [str]:
+def find_files(dir_path: str=None, patterns: list[str]=None, exclude_files: list[str]=None) -> list[str]:
     """Returns a generator yielding files matching the given patterns.
 
     :type dir_path: str
@@ -1379,7 +1458,7 @@ def make_translation_types(original_lines, lang_src, is_seq_strings, not_transli
             # in case the last string of the block is incomplete, ignore that
             prev_full = False
             there_are_ques = (len(original_lines) == len(merging_que_arr))
-            while is_seq_strings and (i + j < l_orig):
+            while (i + j < l_orig):
                 line += original_lines[i + j]
                 if there_are_ques:
                     merging_que = merging_que_arr[i + j]
@@ -1399,7 +1478,7 @@ def make_translation_types(original_lines, lang_src, is_seq_strings, not_transli
 
     return translation_types
 
-def restore_translation_lines(original_lines, translated_lines, translation_types, not_translit_mode):
+def restore_translation_lines(original_lines, translated_lines, translation_types, not_translit_mode, lang="EN"):
     """ Restores array of translated lines using translation types and actual translation results
     """
     translated_lines_all = []
@@ -1409,7 +1488,10 @@ def restore_translation_lines(original_lines, translated_lines, translation_type
     while i < l_orig:
         if translation_types[i] == -1:
             skip_untranslatable = not_translit_mode# and is_sfx(l_orig_lines[i]))
-            translated_lines_all.append('' if skip_untranslatable else original_lines[i])
+            if skip_untranslatable and not is_in_language(original_lines[i], lang, check_all=True):
+                translated_lines_all.append('')
+            else:
+                translated_lines_all.append(original_lines[i])
             i += 1
             continue
         if ti > (l_orig - 1): # shoudn't be here
@@ -1473,7 +1555,7 @@ def make_text_to_translate(source_lines, translation_types):
 # - [ ] Configuration to enable for string cutting as binary / keep byte-length (partailly done).
 # - [ ] Translation from/to other languages maybe.
 # - [x] Merge N following incomplete sentences to the first incomplete. Check by 、, Make 2 arrays before translation: length of split N + translatable strings T = > N=1 =  nosplit; N=2+ => reset and replace N-1 next strings with remainders from first split N times by nearest space; 0 => skip string translation
-# - [ ] Detect midsentence token in last characters and end-tags for merging sentences
+# - [X] Detect midsentence token in last characters and end-tags for merging sentences
 
 # ----------------------------------------------- main -----------------------------------------------
 def main():
@@ -1619,12 +1701,18 @@ def main():
                         if len(line) > 7 and not regexp_mque: regexp_mque = line[7].replace('\n', '')
                         break
 
+    if app_args.g and len(app_args.g) > 0:
+        print("Game engine: \033[1m" + app_args.g + "\033[0m")
+
+    if regexp_excl:
+        print("Exclusion option enabled, check expression:\n  ", regexp_excl.encode('unicode_escape').decode('mbcs'))
+    if regexp_mque:
+        print("Merging option enabled, check expression(s):\n  ", '\n  '.join(regexp_mque.encode('unicode_escape').decode('mbcs').split('||')))
+            
     if len(patterns) == 0:
         patterns = list("*." + i for i in text_exts)
     image_patterns = list("*." + i for i in img_exts)
 
-    if app_args.g and len(app_args.g) > 0:
-        print("Game engine: " + app_args.g)
     if app_args.gd and len(app_args.gd) > 0:
         if not os.path.exists(app_args.gd):
             raise Exception("Target game directory does not exist: " + app_args.gd)
@@ -1645,7 +1733,7 @@ def main():
             cache = Cache("__pycache__")
 
         from googletrans import Translator
-        print("Using Google API translator...")
+        print("Using native\033[1m Python Google\033[0m translator...")
         
         do_merge = app_args.nomerge
         # MTL bans you if you free-use it faster than N (>2000) chars per T (>20) sec
@@ -1705,7 +1793,8 @@ def main():
                 transl_text = transl_text.splitlines()
 
                 # restore empty lines
-                transl_text_full = restore_translation_lines(l_orig_lines, transl_text, translation_types, not_translit_mode)
+                transl_text_full = restore_translation_lines(
+                    l_orig_lines, transl_text, translation_types, not_translit_mode, lang_dest)
                 l_tran = len(transl_text_full)
                 if l_orig != l_tran:
                     lines = ''
@@ -1716,7 +1805,7 @@ def main():
                             lines += f" -({translation_types[i]})-> "
                         except: pass
                         lines += line + '\n'
-                    with open('error_translations.log', 'w', encoding=CSV_ENCODING) as dtxt: dtxt.write(lines)
+                    with open(os.path.join(working_dir, 'error_translations.log'), 'w', encoding=CSV_ENCODING) as dtxt: dtxt.write(lines)
                     raise Exception(f"\nERROR: Mismatch in translated line counts, original={l_orig} new={l_tran}, error_translations.txt written.")
 
                 # if the translation result is shorter don't cache it, it's strange

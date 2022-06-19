@@ -80,30 +80,34 @@ def make_romaji(astring, true_case=True):
 """
 
 EN_LETTERS_RE = re.compile('[a-zA-Z]', re.U)
-def is_in_language(string, lang):
+EN_ALL_RE = re.compile('^[a-zA-Z0-9.,!?;:\"\'-=+()*&%$#@ ]+$', re.U)
+def is_in_language(text: str, lang: str, check_all:bool = False) -> bool:
     """ Checks if string contains a text with the selected language."""
     if lang == "JA" or lang == "JA_ALL": # Japanese
         i = 0
-        while i < len(string):
+        while i < len(text):
             # cjk ranges or punctuation characters
-            if any([range["from"] <= ord(string[i]) <= range["to"] for range in ranges]) or string[i] in OTHER_JP or (lang == "JA_ALL" and (string[i] in PUNCTUATION_JP)):
+            if any([range["from"] <= ord(text[i]) <= range["to"] for range in ranges]) or text[i] in OTHER_JP or (lang == "JA_ALL" and (text[i] in PUNCTUATION_JP)):
                 return True
             i += 1
     elif lang == "EN" or lang == "EN_ALL": # English
-        return EN_LETTERS_RE.search(string) is not None
-    elif lang == "SKIP":
+        if check_all:
+            return EN_ALL_RE.search(text) is not None
+        else:
+            return EN_LETTERS_RE.search(text) is not None
+    elif "SKIP" in lang:
         return True
     return False
 
-def tokenize_japanese(text):
+def tokenize_japanese(text: str):
     # Makes Romaji out of a Japanese text.
     kks = pykakasi.kakasi()
     result = kks.convert(text)
     #all_words
     for item in result:
-        item['orig']
+        item["orig"]
 
-def chunk(seq, num):
+def chunk(seq: list, num: int):
     avg = len(seq) / float(num)
     out = []
     last = 0.0
@@ -114,13 +118,13 @@ def chunk(seq, num):
 
     return out
 
-def is_incomplete(text, lang='JA'):
-    if lang == 'JA':
+def is_incomplete(text: str, lang: str = "JA"):
+    if lang == "JA":
         if '、' in text[-1:]:
             return True
     return False
 
-def split_n(text, p=3):
+def split_n(text:str, p:int = 3):
     words = list(text.split())
     lw = len(words)
     nw = lw // p + (lw % p > 0)
@@ -135,7 +139,7 @@ def split_n(text, p=3):
                 lines.append(current)
             current = word
         else:
-            current += " " + word
+            current += ' ' + word
         i += 1
     lines.append(current)
     return lines

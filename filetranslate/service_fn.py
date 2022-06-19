@@ -159,8 +159,11 @@ def print_progress(index, total, type_of_progress=0, start_from=0, end_with=100,
     done = round(PROGRESS_BAR_LEN * percent_done // 100)
 
     done_str = None
-    if type_of_progress == 0 or not USE_COLORAMA:
-        done_str = '█' * int(done)
+    if type_of_progress == 0 or type_of_progress == 5 or not USE_COLORAMA:
+        if type_of_progress == 5:
+            done_str = '▒' * int(done)
+        else:
+            done_str = '█' * int(done)
     elif type_of_progress == 1:
         done_str = Fore.LIGHTBLUE_EX + '█' * int(done) + Style.RESET_ALL
     elif type_of_progress == 2:

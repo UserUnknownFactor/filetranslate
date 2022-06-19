@@ -213,6 +213,7 @@ class OCRspace:
             strings = []
             if not r["ParsedResults"][0] or len(r["ParsedResults"][0]["ParsedText"]) < 1:
                 return (coords, words)
+
             for line in r["ParsedResults"][0]["TextOverlay"]["Lines"]:
                 strings.append(line["LineText"])
                 for word in line["Words"]:
@@ -221,4 +222,5 @@ class OCRspace:
                                 word["Top"],
                                 word["Width"],
                                 word["Height"]])
+
             return merge_close_boxes(coords, words)
