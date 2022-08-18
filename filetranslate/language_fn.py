@@ -80,7 +80,7 @@ def make_romaji(astring, true_case=True):
 """
 
 EN_LETTERS_RE = re.compile('[a-zA-Z]', re.U)
-EN_ALL_RE = re.compile('^[a-zA-Z0-9.,!?;:\"\'-=+()*&%$#@ ]+$', re.U)
+EN_ALL_RE = re.compile('^[\na-zA-Z0-9.,!?;:\"\'-=+()*&%$#@ ]+', re.U)
 def is_in_language(text: str, lang: str, check_all:bool = False) -> bool:
     """ Checks if string contains a text with the selected language."""
     if lang == "JA" or lang == "JA_ALL": # Japanese

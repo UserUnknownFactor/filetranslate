@@ -44,6 +44,7 @@ class MaxColor(object):
 
     @staticmethod
     def pix_to_hex(pix):
+        if not pix or len(pix)<3: return (0, 0, 0)
         return MaxColor.rgb_to_hex(pix[0], pix[1], pix[2])
 
     @staticmethod
@@ -67,6 +68,7 @@ class MaxColor(object):
 
     @staticmethod
     def complement_pix(pix):
+        if not pix or len(pix)<3: return (0, 0, 0)
         return MaxColor.complement(pix[0], pix[1], pix[2])
 
     @staticmethod

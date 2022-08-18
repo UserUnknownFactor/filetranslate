@@ -200,7 +200,7 @@ def separate_tags_and_sentence(sentence, tags=[], unescape=False, all_tags=r''):
     return [starttag, sentence, endtag]
 
 
-def split_reader_to_array(reader_array, tags=[]):
+def split_reader_to_array(reader_array, tags=[], remove_newlines=False):
     indexed_array = []
     i = 0
     all_tags_re = '(?:(?:' + '|'.join(
@@ -210,7 +210,10 @@ def split_reader_to_array(reader_array, tags=[]):
     pos = 0
     old_pos = 0
     for line in reader_array:
-        arr = line[0].splitlines()
+        tmp = line[0]
+        if remove_newlines:
+            tmp = tmp.replace('\r\n', '').replace('\n', '')
+        arr = tmp.splitlines()
         l = len(arr) # for easier debugging
         for j, a in enumerate(arr):
             arr[j] = separate_tags_and_sentence(a, tags, all_tags=all_tags_re)
@@ -346,7 +349,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 reader_ind = cache.get(file_name)
             if reader_ind is None:
                 #print(TAB_REPLACER, end='', flush=True)
-                reader_ind = split_reader_to_array(list(csv.reader(f, DIALECT_TRANSLATION)), string_tags)
+                reader_ind = split_reader_to_array(list(csv.reader(f, DIALECT_TRANSLATION)), string_tags, self.remove_newlines)
                 if ENABLE_CACHE:
                     cache.set(file_name, reader_ind, expire=CACHE_EXPIRY_TIME)
 
@@ -354,7 +357,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             try:
                 num_lines = sum(1 for row in reader_ind if len(row)>4 and row[4] is None or len(row[4]) == 0) if upgrade else len(reader_ind)
             except IndexError as e:
-                raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]}")
+                del cache[file_name]
+                raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]} of {os.path.basename(file_name)}")
             progress_divisor = max(1, num_lines // 1000)
             print_progress(1, 100, type_of_progress=4)
             to_transl = []
@@ -717,7 +721,7 @@ def prepare_csv_excel(file_name, restore=True):
     write_csv_list(file_name, old_list, ftype=(DIALECT_TRANSLATION if restore else DIALECT_EXCEL))
     return True
 
-def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHAR, use_bytelength=False, skip_processed=False):
+def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHAR, use_bytelength=False, skip_processed=False, withattributes=False):
     """ Cuts a string into interval-sized parts using `cut_chrs`.
         If `interval == 1`, original string's (byte-)length is used.
         The `cut_ch`r can be the engine's line separator or a unicode marker for manual processing.
@@ -725,11 +729,16 @@ def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHA
     """
     if not interval: return
     csv_files = list(find_files(self.work_dir, ['*' + STRINGS_DB_POSTFIX])) #, '*' + ATTRIBUTES_DB_POSTFIX
+    if withattributes:
+        csv_files += list(find_files(self.work_dir, ['*' + ATTRIBUTES_DB_POSTFIX]))
+    nfile = 0
+    nall = len(csv_files)
+    print_progress(0, 100)
     for a_file in csv_files:
         #print(PROGRESS_CHAR, end='', flush=True)
         old_attrs = read_csv_list(a_file)
         old_attrs_len = len(old_attrs)
-        print_progress(0, 100)
+        nfile +=1
         for i, line in enumerate(old_attrs):
             if len(line) < 2: continue
             transl_line = line[1]
@@ -798,10 +807,10 @@ def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHA
                     if len_orig > 1 and len(transl_line) > len_orig:
                         transl_line = transl_line[:len_orig] + cut_chrs + transl_line[len_orig:]
             old_attrs[i][1] = transl_line
-            print_progress(i, old_attrs_len, end_with=98)
 
+        print_progress(int(nfile*99/nall), 100, end_with=99)
         write_csv_list(a_file, old_attrs)
-        print_progress(100, 100)
+    print_progress(100, 100)
 
 
 def _applyIntersectionAttributes(self, check_type=1, csv_files=[]):
@@ -1355,7 +1364,7 @@ class FileTranslate:
     """
     def __init__(self, work_dir, img_exts, file_enc, re_a, re_s, re_t, re_a_sep, re_excl, re_mque,
                  game_dir=None, git_origin='', c_gn=0,
-                 has_t=False, has_ct=False, edquo=False, cap_a=False, strip_cmts=True):
+                 has_t=False, has_ct=False, edquo=False, cap_a=False, strip_cmts=True, remove_newlines=True):
 
         self.re_a = re.compile(r'%s' % re_a, re.MULTILINE) if re_a else None
         self.re_s = re.compile(r'%s' % re_s, re.MULTILINE) if re_s else None
@@ -1363,6 +1372,7 @@ class FileTranslate:
         self.re_a_sep = re.compile(r'%s' % re_a_sep) if re_a_sep else None
         self.re_excl = re.compile(r'%s' % re_excl) if re_excl else None
         self.re_mergeque = re_mque if re_mque else None
+        self.remove_newlines = remove_newlines
 
         self.has_text = False
         self.has_context = False
@@ -1495,13 +1505,13 @@ def restore_translation_lines(original_lines, translated_lines, translation_type
             i += 1
             continue
         if ti > (l_orig - 1): # shoudn't be here
-            breakpoint
+            #breakpoint
             break
         j = 0
         if translation_types[i] > 1:
             if i == l_orig - 1: #shoudn't be here
                 # just in case the last line is partial, merge all N parts into it
-                breakpoint
+                #breakpoint
                 n = ti + translation_types[i]
                 t = ''
                 while ti < len(translated_lines):
@@ -1528,7 +1538,7 @@ def restore_translation_lines(original_lines, translated_lines, translation_type
             j = 1
             ti += 1
         else: #shoudn't be here
-            breakpoint
+            #breakpoint
             j = 1
             ti += 1
         i += j
@@ -1564,7 +1574,7 @@ def main():
     game_directory = None
     text_exts = ["txt", "json"]
     def_pat = ','.join("*." + i for i in text_exts)
-    img_exts = ["png", "jpg", "jpeg", "webp"]
+    img_exts = ["png", "jpg", "jpeg", "webp", "gif"]
 
     # process .project file and read the game directory location if it's there
     for f in [f for f in os.listdir(working_dir) if os.path.isfile(f) and (
@@ -1603,7 +1613,7 @@ def main():
 
          special databases (DSVs column-separated by {DELIMITER_CHAR} with quote character {ESCAPE_CHAR}):
            game_regexps.csv:
-             DSV file with game-specific file encodings, extensions and regexp patterns;
+             DSV file with game-specific file encodings, extensions and RegExp patterns;
            replacement_tags.csv:
              DSV file with tags found in strings. Replace comma with :.?! to help MTL position them.
              When preparing strings for MTL, translation_dictionary_in has priority.
@@ -1617,11 +1627,13 @@ def main():
     parser.add_argument("-e", help="Original encoding (ex: cp932, cp1252 etc; utf-8 by default)", default='', metavar=("encoding"))
     parser.add_argument("-p", help=f"File patterns (ex: {def_pat})", default='', metavar=("file_patterns"))
     parser.add_argument("-g", default=game_engine, help=f"Game engine preset ({project_types})", metavar=("game_engine"))
-    parser.add_argument("-lang", default='JA-EN', help=f"Translaton direction pair SRC-DEST (ex: JA-EN)", metavar=("game_language"))
+    parser.add_argument("-lang", default='JA-EN', help=f"Translation direction pair SRC-DEST (ex: JA-EN)", metavar=("game_language"))
     #parser.add_argument("-d", help="Directory of the source files (current by default)", default=working_dir, metavar=("default_path"))
     parser.add_argument("-gd", default=game_directory, help="Directory of the original game files", metavar=("game_files_path"))
     parser.add_argument("-cm", default=CUT_CHARACTER, help="Cut-mark string or character", metavar=("cut_mark"))
-    parser.add_argument("-nomerge", help="Don't merge partial sequental strings during translation", action="store_true")
+    parser.add_argument("-nomerge", help="Don't merge partial sequential strings during translation", action="store_true")
+    parser.add_argument("-remnl", help="Remove newlines from source strings", action="store_true")
+    parser.add_argument("-images", help="Process image files", action="store_true")
 
     regroup = parser.add_argument_group("regexps")
     regroup.add_argument("-ra", help="RegExp for attributes", default='', metavar=("attr_regexp"))
@@ -1711,7 +1723,9 @@ def main():
             
     if len(patterns) == 0:
         patterns = list("*." + i for i in text_exts)
-    image_patterns = list("*." + i for i in img_exts)
+    image_patterns = []
+    if app_args.ocr or app_args.images:
+        image_patterns = list("*." + i for i in img_exts)
 
     if app_args.gd and len(app_args.gd) > 0:
         if not os.path.exists(app_args.gd):
@@ -1843,7 +1857,7 @@ def main():
                 pat_provided = True
 
     if not pat_provided and not is_pattern_manual:
-        if app_args.tu or app_args.t or app_args.a:
+        if len(image_patterns) and app_args.tu or app_args.t or app_args.a:
             patterns += image_patterns
         elif app_args.ocr:
             patterns = image_patterns
@@ -1858,7 +1872,8 @@ def main():
                        re_mque = regexp_mque,
                        game_dir=app_args.gd,
                        git_origin=(app_args.url if USE_GIT else ''),
-                       strip_cmts=True)
+                       strip_cmts=True,
+                       remove_newlines=app_args.remnl)
 
     if app_args.isc:
         is_type = 'attributes'
@@ -1876,8 +1891,8 @@ def main():
         print('')
         return
     elif app_args.cut:
-        print("Applying cutoff marks %s at %s%d characters: " %
-              (app_args.cm, ('~' if True else ''), app_args.cut), end='', flush=True)
+        print("Applying cutoff marks %s at %s%d characters... " %
+              (app_args.cm, ('~' if True else ''), app_args.cut))
         FT.applyCutMarks(app_args.cut,
                          cut_chrs=string_unescape(app_args.cm),
                          #mind_chr=' ',
