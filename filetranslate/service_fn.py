@@ -133,6 +133,18 @@ def detect_encoding(file_name):
     else: enc = "cp932"
     return enc
 
+def make_same_size(inp_str: str, orig_len: int, enc: str, filler_char: str="\0") -> str:
+    """ Makes string a certain binary length by filling or cutting it. """
+    s = inp_str
+    while len(s.encode(enc)) > orig_len:
+        s = s[:-1]
+    _nlen = len(s.encode(enc))
+    _olen = len(inp_str.encode(enc))
+    if _nlen < orig_len:
+        l_rchar = len(filler_char.encode(enc)) # should be 2 for utf-16le an \0
+        s += filler_char * int((orig_len -_nlen)/l_rchar)
+    assert len(s.encode(enc)) == orig_len
+    return s
 
 def print_progress(index, total, type_of_progress=0, start_from=0, end_with=100, title=''):
     """ Prints progress bar

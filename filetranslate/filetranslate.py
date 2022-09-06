@@ -1009,7 +1009,94 @@ def _applyFixesToTranslation(self, transl_fn, is_string=True):
     print_progress(100, 100)
     return is_fixed
 
-def _applyTranslationsToFile(self, file_name, mode=1):
+def _getOutputName(self, file_name):
+    """ Returns output name given a file name """
+    outputName = ''
+    
+    if self.use_game_dir:
+        # WARNING: backup game files before owerwriting
+        outputName = file_name.replace(self.work_dir.rstrip(os.sep), self.game_dir.rstrip(os.sep))
+        #print(f"Using game directory {outputName}...")
+    else:
+        outputName = file_name.replace(self.work_dir, os.path.join(self.work_dir, DEFAULT_OUT_DIR))
+    return outputName
+
+def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
+    outputName = self.getOutputName(file_name)
+    if not os.path.exists(file_name) or (os.path.exists(outputName) and not (self.use_game_dir or (mode & 2))):
+        #print("skipped, already applied and not replacement mode or original missing", end='', flush=True)
+        return False
+
+    splitName = os.path.splitext(file_name)
+    onlyName = splitName[0]
+    translationsFile = onlyName + STRINGS_DB_POSTFIX
+
+    if not os.path.exists(translationsFile): return False
+
+    out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
+    translation = read_csv_list(translationsFile)
+
+    zero_char = '\0'.encode(self.file_enc)
+    zero_char_len = len(zero_char)
+
+    with open(file_name, 'rb') as f:
+        bstr = f.read()
+        _hash = md5(bstr).hexdigest()
+
+        for line in translation:
+            if len(line) < 2 or not line[1]: continue
+
+            tmp_str = line[1]
+            origin_str = line[0]
+            if (mode & 4):
+                for dict_line in out_dict:
+                    if len(dict_line[0]) == 0: continue
+                    repl = re.compile(dict_line[0])
+                    tmp_str = re.sub(repl, dict_line[1], tmp_str)
+                    origin_str = re.sub(repl, dict_line[1], origin_str)
+
+            if self.escape_dquo_a:
+                tmp_str = tmp_str.replace('"', '\\"')
+            
+            _offset_mode = len(line) >= 3 and line[2]
+            _enc = self.file_enc
+            _filler = "\0"
+
+            if _offset_mode:
+                _a = [l.strip() for l in line[2].split(',') if l.strip()]
+                #example of the third csv column (offset, encoding, filler) is: 
+                #  0x0011aa[, utf-16le][, \x20]
+                if len(_a) > 0:
+                    offset = int(_a[0], 16)
+                    if len(_a) > 1:
+                        _enc = _a[1]
+                    if len(_a) > 2:
+                        _filler = string_unescape(_a[2])
+                else:
+                    _offset_mode = False
+
+            _orig_str = origin_str.encode(_enc)
+            _orig_len = len(_orig_str)
+            tmp_str = make_same_size(tmp_str, _orig_len, _enc, _filler)
+            #new_translation.append([line[0], tmp_str.strip('\0')]) # actually applied translations
+            if _offset_mode and bstr[offset:offset+_orig_len] == _orig_str:
+                    bstr = bstr[:offset] + tmp_str.encode(_enc) + bstr[offset+_orig_len:]
+            else:
+                # this is more reliable as it doesn't depend on the file's version
+                # but strings need to be long enough to be unique
+                bstr = bstr.replace(_orig_str + zero_char, tmp_str.encode(_enc) + zero_char, 1)
+
+        if _hash != md5(bstr).hexdigest():
+            pathOut = os.path.dirname(outputName)
+            if pathOut != '' and not os.path.exists(pathOut):
+                os.makedirs(pathOut, exist_ok=True)
+    
+            with open(outputName, 'wb') as o:
+                o.write(bstr)
+            return True
+    return False
+
+def _applyTranslationsToFile(self, file_name, mode=1) -> bool:
     """ Applies translations from translation databases to game files and images
         and places results in translation_out directory.
     """
@@ -1018,7 +1105,10 @@ def _applyTranslationsToFile(self, file_name, mode=1):
     onlyName = splitName[0]
     onlyExt = splitName[1][1:]
 
-    if not (os.path.exists(onlyName + STRINGS_DB_POSTFIX) or os.path.exists(onlyName + ATTRIBUTES_DB_POSTFIX)): return
+    if onlyExt == "exe" or onlyExt == "dll":
+        return self.applyTranslationsToExe(file_name, mode)
+
+    if not (os.path.exists(onlyName + STRINGS_DB_POSTFIX) or os.path.exists(onlyName + ATTRIBUTES_DB_POSTFIX)): return False
 
     #try:
     #If we write to the same folder make a backup
@@ -1033,17 +1123,8 @@ def _applyTranslationsToFile(self, file_name, mode=1):
             re_a = None
             re_s = re.compile(r'%s' % r'<tspan x="0">([^<]+)<', re.MULTILINE)
 
-    outputName = ''
-    useGameDir = (self.game_dir and self.game_dir != ''  and os.path.exists(self.game_dir))
-    if useGameDir:
-        # WARNING: backup game files before owerwriting
-        outputName = file_name.replace(self.work_dir.rstrip(os.sep), self.game_dir.rstrip(os.sep))
-        #print(f"Using game directory {outputName}...")
-    else:
-        outputName = file_name.replace(self.work_dir, os.path.join(self.work_dir, DEFAULT_OUT_DIR))
-        #print(f"Writing to directory {outputName}...")
-    # skip already translated files, delete them manually to redo
-    if not os.path.exists(file_name) or (os.path.exists(outputName) and not (useGameDir or (mode & 2))):
+    outputName = self.getOutputName(file_name)
+    if not os.path.exists(file_name) or (os.path.exists(outputName) and not (self.use_game_dir or (mode & 2))):
         #print("skipped, already applied and not replacement mode or original missing", end='', flush=True)
         return False
 
@@ -1056,15 +1137,12 @@ def _applyTranslationsToFile(self, file_name, mode=1):
     with open(file_name, mode="rb") as torg:
         if b"\r\n" in torg.read():
             is_win_linenedings = True
-            #print("found windows newlines")
+            #print("found Windows' newlines")
 
     with open(file_name, mode="r", encoding=self.file_enc) as torg:
         torg_text = torg.read()
 
-    #torg_text = torg_text.decode(self.file_enc)
-
     apply_txt = False
-    #onlyName = onlyName.replace(workDir, workDir + "\\translations")
     forig_t_lines = 0
     err_flag = False
 
@@ -1072,8 +1150,6 @@ def _applyTranslationsToFile(self, file_name, mode=1):
     if os.path.exists(str_fn) and re_s:
         with open(str_fn, 'r', newline='', encoding=CSV_ENCODING) as f:
             reader = csv.reader(f, DIALECT_TRANSLATION)
-            #re_endline = re.compile("[?!\"'.]|\.{2}")
-            #last_line_continues = False
 
             split_torg_text = re_s.split(torg_text)
 
@@ -1111,20 +1187,6 @@ def _applyTranslationsToFile(self, file_name, mode=1):
                 if self.escape_dquo_a:
                     tmp_str = tmp_str.replace('"', '\\"')
 
-                # makes string true case, doesn't bode well with tags and macros
-                #if ENABLE_TRUECASE and tc_enable:
-                #    tmp_str = get_true_case(tmp_str)
-                '''
-                # if line continues over linebreak make first word lowercase
-                # should ignore names and places with dictionary...
-                if last_line_continues:
-                    a = tmp_str.split(" ")
-                    if (a[0] != "\"I" and a[0] != "I")
-                    a[0] = a[0].lower()
-                    tmp_str = a.join(" ")
-                '''
-                #torg_text = re.sub(re_s, tmp_str, torg_text, 1)
-                #print(match)
                 # don't check all text
                 for i  in range(last_pos, len(split_torg_text)):
                     orig_ln = split_torg_text[i]
@@ -1395,6 +1457,7 @@ class FileTranslate:
         self.img_exts = img_exts
         self.file_enc = file_enc.strip()
         self.game_dir = game_dir.rstrip(os.sep) if game_dir else None
+        self.use_game_dir = (self.game_dir and self.game_dir != '' and os.path.exists(self.game_dir))
         self.escape_dquo_a = edquo
         self.cap_a = cap_a
         self.remote_url = git_origin
@@ -1403,7 +1466,9 @@ class FileTranslate:
     translateCSV = translateCSV
     makeTranslatableStrings = _makeTranslatableStrings
     applyFixesToTranslation = _applyFixesToTranslation
+    getOutputName = _getOutputName
     applyTranslationsToFile = _applyTranslationsToFile
+    applyTranslationsToExe = _applyTranslationsToExe
     applyIntersectionAttributes = _applyIntersectionAttributes
     applyCutMarks = _applyCutMarks
     intersectAttributes = _intersectAttributes
@@ -1560,9 +1625,9 @@ def make_text_to_translate(source_lines, translation_types):
 # ---------------------------------------------- plans -----------------------------------------------
 # TODO:
 # - [x] Exlude strings from adding to translation database by regexp in game_regexps.csv.
-# - [ ] Support for translating raw binary blobs with {fileanme}_raw.csv (format: address=>original=>translation).
+# - [X] Support for translating raw binary blobs with {bin_fileanme}_strings.csv
 # - [ ] Option to apply string cutting only in -a mode.
-# - [ ] Configuration to enable for string cutting as binary / keep byte-length (partailly done).
+# - [X] Configuration to enable for string cutting as binary / keep byte-length
 # - [ ] Translation from/to other languages maybe.
 # - [x] Merge N following incomplete sentences to the first incomplete. Check by 、, Make 2 arrays before translation: length of split N + translatable strings T = > N=1 =  nosplit; N=2+ => reset and replace N-1 next strings with remainders from first split N times by nearest space; 0 => skip string translation
 # - [X] Detect midsentence token in last characters and end-tags for merging sentences
@@ -1675,6 +1740,7 @@ def main():
         gitgroup.add_argument("-exp", help="Export git repository as a zip file", action="store_true")
         gitgroup.add_argument("-nogit", help="Disable Git usage", action="store_true")
 
+
     exgroup = parser.add_argument_group("excel").add_mutually_exclusive_group()
     exgroup.add_argument("-px", help="Prepare for Excel or OpenOffice (√ = tab, ∞ = newline)", action="store_true")
     exgroup.add_argument("-rx", help="Revert Excel or OpenOffice compatibility for -a and -fix options", action="store_true")
@@ -1748,8 +1814,12 @@ def main():
 
         from googletrans import Translator
         print("Using native\033[1m Python Google\033[0m translator...")
-        
-        do_merge = app_args.nomerge
+
+        if app_args.remnl:
+            print(" (No newlines in source strings)")
+
+        do_merge = not app_args.nomerge
+
         # MTL bans you if you free-use it faster than N (>2000) chars per T (>20) sec
         # The following methods can be implemented within a custom translator's class
         if not hasattr(Translator, "wait"):
@@ -1767,6 +1837,7 @@ def main():
         if hasattr(Translator, "translate"):
             translate_old = Translator.translate
             not_translit_mode = False
+
             def translate_new(self, lines_array, is_seq_strings=False, merging_que_arr=[]):
                 text_to_translate = '\n'.join(lines_array) + '\n'
                 if len(text_to_translate.strip()) == 0: return (0, lines_array)
@@ -2037,3 +2108,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
