@@ -20,7 +20,7 @@ API_KEY_DB = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'apikeys.
 CSV_ENCODING = "utf-8-sig"
 DELIMITER_CHAR ='→'
 
-csv.register_dialect("apikeys", delimiter=DELIMITER_CHAR, quotechar='', doublequote=False, quoting=csv.QUOTE_NONE)
+csv.register_dialect("apikeys", delimiter=DELIMITER_CHAR, doublequote=False, quoting=csv.QUOTE_NONE)
 
 def get_api_key():
     """Get API key from a corresponding database

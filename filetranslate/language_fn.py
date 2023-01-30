@@ -95,7 +95,7 @@ def is_in_language(text: str, lang: str, check_all:bool = False) -> bool:
             return EN_ALL_RE.search(text) is not None
         else:
             return EN_LETTERS_RE.search(text) is not None
-    elif "SKIP" in lang:
+    elif not lang or "ANY" in lang or "SKIP" in lang:
         return True
     return False
 

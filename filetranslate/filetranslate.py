@@ -370,8 +370,11 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             merge_ender_re = merge_nostarter_re = merge_noendtag_re = None
             if self.re_mergeque:
                 r = self.re_mergeque.split('||')
+                # generic specification if the line allowed to be merged; for example [^;…。？！）\.\]]*$
                 merge_ender_re = re.compile(r'%s' % r[0]) if len(r)>0 else None
+                # stuff that's blocking for merging in start tags of the current/next line; for example (?:^[（「\\])
                 merge_nostarter_re = re.compile(r'%s' % r[1]) if len(r)>1 else None
+                # stuff that's blocking for merging in end tags of the current/previous line; for example (?:[」）]$)
                 merge_noendtag_re = re.compile(r'%s' % r[2]) if len(r)>2 else None
             for row in reader_ind:
                 if len(row[2]) == 0:
@@ -409,18 +412,20 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                         # check starttags and text start
                         if merge_nostarter_re:
                             def check_intro(idx, in_idx):
+                                # not last item of reader_ind or reader_ind's pre-translations split
                                 if idx + 1 > len(reader_ind) or in_idx + 1 > len(reader_ind[idx][3]): return False
                                 check_item = reader_ind[idx][3][in_idx]
-                                is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (
-                                        merge_nostarter_re.search(check_item[0])))
+                                # check if nostarter is in starttags or in item's translatable text (0 and 1 array items)
+                                is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (merge_nostarter_re.search(check_item[0])))
                                 is_in_text = bool(check_item[1] and merge_nostarter_re.search(check_item[1]))
                                 return (is_in_tag or is_in_text)
 
+                            # check if nostarter is in next pre-translation split or in next line of csv
                             if check_intro(i, i_ln+1) or check_intro(i+1, 0):
                                 is_mergeable[i_ln] = False
                                 continue
                          
-                        # check endtag(s)
+                        # check endtag(s) for allowed enders too
                         if (merge_noendtag_re):
                             if item[2] is not None and len(item[2]) >= 1 and bool(merge_noendtag_re.search(item[2])):
                                 is_mergeable[i_ln] = False
@@ -428,8 +433,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                                     allow_merge = False
                                 continue
 
-                        # check text
-                        is_mergeable[i_ln] = bool(item[1] and merge_ender_re.search(item[1]))  and allow_merge
+                        # check text for allowed ender, if it's long enough and allowed to merge
+                        is_mergeable[i_ln] = bool(item[1] and merge_ender_re.search(item[1])) and len(item[1]) > 5 and allow_merge
                         if mergeable_lines > 1 and i_ln < len(reader_ind[i][3]) - 1 and not reader_ind[i][3][i_ln+1][1]:
                             is_mergeable[i_ln] = False # empty next line marks end of the sentence
                         if not type_str:
@@ -475,7 +480,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             writer = csv.writer(f, DIALECT_TRANSLATION)
             for row in reader_ind:
                 i = row[0]
-                writer.writerow([reader_ind[i][2], reader_ind[i][4]] + reader_ind[i][5:])
+                out = reader_ind[i][4]
+                writer.writerow([reader_ind[i][2], out] + reader_ind[i][5:])
 
         print_progress(100, 100)
 
@@ -626,7 +632,7 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
                     if len(att_str) == 0:
                         att_str = next(match_groups, None)
                         continue
-                    if att_str and len(att_str)>0 and is_in_language(att_str, lang) and att_str not in attributes:
+                    if att_str and len(att_str)>0 and (len(lang) and is_in_language(att_str, lang)) and att_str not in attributes:
                         if self.re_t:
                             for tag in self.re_t.findall(att_str):
                                 if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
@@ -658,7 +664,7 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
                 except:
                     pass
 
-                if len(text_str) > 0 and is_in_language(text_str, lang):
+                if len(text_str) > 0 and (len(lang) and is_in_language(text_str, lang)):
                     if self.re_t:
                         for tag in self.re_t.findall(text_str):
                             if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
@@ -728,7 +734,7 @@ def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHA
         Can process strings based on their byte length in the provided encoding.
     """
     if not interval: return
-    csv_files = list(find_files(self.work_dir, ['*' + STRINGS_DB_POSTFIX])) #, '*' + ATTRIBUTES_DB_POSTFIX
+    csv_files = list(find_files(self.work_dir, ['*' + STRINGS_DB_POSTFIX]))
     if withattributes:
         csv_files += list(find_files(self.work_dir, ['*' + ATTRIBUTES_DB_POSTFIX]))
     nfile = 0
@@ -838,7 +844,7 @@ def _applyIntersectionAttributes(self, check_type=1, csv_files=[]):
                 except Exception as e:
                     print("\nERROR: No original line in file", a_file)
                     raise e
-                if index is not None:
+                if index is not None and len(intersect_a[index]) > 1:
                     old_attrs[i] = [intersect_a[index][0], intersect_a[index][1]] + line[2:]
                     is_changed = True
 
@@ -1707,14 +1713,14 @@ def main():
     regroup.add_argument("-rex", help="RegExp for text exclusion", default='', metavar=("exc_regexp"))
 
     optgroup = parser.add_argument_group("stage").add_mutually_exclusive_group()
-    optgroup.add_argument("-i", help="Inititalize translation files", action="store_true")
+    optgroup.add_argument("-i", help="Initialize translation files", action="store_true")
     optgroup.add_argument("-u", help="Update translation files for new strings", action="store_true")
     optgroup.add_argument("-ocr", help="Perform text recognition for images", action="store_true")
     optgroup.add_argument("-t", help="Perform initial string translation", type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument("-tu", help="Perform translation of new strings", type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument("-fix", help="Revert replacement tags and apply translation_dictionary_out to translation", action="store_true")
     optgroup.add_argument("-cut", help="Add cut-mark character after N-letters", type=int, nargs='?', const=1, default=0, metavar="N")
-    optgroup.add_argument("-a", help="Apply translation to original files (dafault: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
+    optgroup.add_argument("-a", help="Apply translation to original files (default: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
 
     replgroup = parser.add_argument_group("replacement")
     replgroup.add_argument("-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)", action="store_true")
@@ -1864,8 +1870,6 @@ def main():
                 text_to_translate = make_text_to_translate(l_orig_lines, translation_types)
 
                 #print(PROGRESS_CHAR, end='', flush=True)
-                self.wait()
-
                 while True:
                     try:
                         transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
@@ -1873,6 +1877,7 @@ def main():
                     except Exception as e:
                         print(str(e), end='\r')
                         sleep(TRANSLATION_BAN_DELAY)
+                self.wait()
 
                 tr_txt_len = len(transl_text)
                 transl_text = transl_text.splitlines()
@@ -2064,7 +2069,7 @@ def main():
                 print("Upgrading strings " + base_name + ' :', end='', flush=True)
             else:
                 print("Making strings " + base_name + ' :', end='', flush=True)
-            res = FT.makeTranslatableStrings(currentFile, app_args.u, lang_src + "_ALL")
+            res = FT.makeTranslatableStrings(currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '')
         elif app_args.rit:
             for csv_file in [(only_name + ATTRIBUTES_DB_POSTFIX), (only_name + STRINGS_DB_POSTFIX)]:
                 tmp = FT.replaceInTranslations(csv_file, old_re, new_str, app_args.f)

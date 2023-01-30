@@ -34,8 +34,8 @@ ESCAPECHARS_RE = re.compile(FULL_RE + r'(?:(?:[0-2][0-9]{1,2}|3[0-6][0-9]|37[0-7
 
 DIALECT_EXCEL = "excel"
 DIALECT_TRANSLATION = "translation"
-csv.register_dialect(DIALECT_EXCEL, delimiter='\t', doublequote=False, quoting=csv.QUOTE_NONE, escapechar='"', lineterminator='\n')
-csv.register_dialect(DIALECT_TRANSLATION, delimiter=DELIMITER_CHAR, quotechar='', doublequote=False, quoting=csv.QUOTE_NONE, escapechar=ESCAPE_CHAR, lineterminator='\n')
+csv.register_dialect(DIALECT_EXCEL, delimiter='\t', doublequote=False, quotechar="\uffff", quoting=csv.QUOTE_NONE, escapechar='"', lineterminator='\n')
+csv.register_dialect(DIALECT_TRANSLATION, delimiter=DELIMITER_CHAR, quotechar="\uffff", quoting=csv.QUOTE_NONE, escapechar=ESCAPE_CHAR, lineterminator='\n')
 
 LAST_NEWLINE_RE = re.compile(r"([^\n])[\n]$")
 
