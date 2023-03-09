@@ -13,7 +13,7 @@ except ImportError:
 
 ENABLE_SFX_TO_ROMAJI = False #experimental
 try:
-    #import pykakasi
+    import pykakasi
     ENABLE_SFX_TO_ROMAJI = False #True # change this to manually set the state
 except ImportError:
     pass
@@ -54,10 +54,10 @@ kana_jpn = """
 ぎょ じょ びょ ぴょ き゚ょ
 """.replace(' ','').replace('\n','')
 
-ALL_JPN_RE= r'(?:[\u3000-\u303F]|[\u3040-\u309F]|[\u30A0-\u30FF]|[\uFF00-\uFFEF]|[\u4E00-\u9FAF]|[\u2605-\u2606]|[\u2190-\u2195]|\u203B)'
+ALL_JPN_RE= re.compile(r'[\u3041-\u3096]|[\u30A0-\u30FF]|[\u3400-\u4DB5\u4E00-\u9FCB\uF900-\uFA6A]|[\u2E80-\u2FD5]|[\uFF5F-\uFF9F]|[\u3000-\u303F]|[\u31F0-\u31FF\u3220-\u3243\u3280-\u337F]|[\uFF01-\uFF5E]|[\u2026-\u203B]', re.U)
 SPACE_JP = '\u3000'
 KANA_SFX = "あぁ うぅ おぉ いぃ えぇ ぶっ".replace(' ','')
-PUNCTUATION_JP = SPACE_JP + "、 … 。 ？ ！ ～".replace(' ','') #、
+PUNCTUATION_JP = SPACE_JP + "、 … 。 ？ ！ ～ \n".replace(' ','') #、
 OTHER_JP = "ﾉｼジュ"
 KANA_SFX_RE = re.compile(r'\b[%s%s]+\b' % (KANA_SFX, PUNCTUATION_JP), re.U)
 
@@ -84,12 +84,7 @@ EN_ALL_RE = re.compile('^[\na-zA-Z0-9.,!?;:\"\'-=+()*&%$#@ ]+', re.U)
 def is_in_language(text: str, lang: str, check_all:bool = False) -> bool:
     """ Checks if string contains a text with the selected language."""
     if lang == "JA" or lang == "JA_ALL": # Japanese
-        i = 0
-        while i < len(text):
-            # cjk ranges or punctuation characters
-            if any([range["from"] <= ord(text[i]) <= range["to"] for range in ranges]) or text[i] in OTHER_JP or (lang == "JA_ALL" and (text[i] in PUNCTUATION_JP)):
-                return True
-            i += 1
+        return ALL_JPN_RE.search(text) is not None
     elif lang == "EN" or lang == "EN_ALL": # English
         if check_all:
             return EN_ALL_RE.search(text) is not None
