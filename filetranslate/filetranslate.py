@@ -2,6 +2,7 @@
 # The project requires Python 3.7 at the least
 
 import os, sys
+from typing import Tuple, List
 # add curent file's directory to path to include modules from the same folder
 sys.path.append(os.path.dirname(__file__))
 
@@ -83,7 +84,7 @@ DICTIOANRY_FILE = "dictionary.csv"
 DEFAULT_OUT_DIR = "translation_out"
 PROJECT_EXT = ".project"
 GIT_INCLUDE_FILES = ["*.csv", "*.project", "*.svg"]
-EXLUDED_DIRS = set([".git",".vscode",".backup", "__pycache__", "[Originals]", DEFAULT_OUT_DIR])
+EXLUDED_DIRS = set([".git",".vscode",".backup", "__pycache__", "to_compare", "[Originals]", DEFAULT_OUT_DIR])
 
 # processing RegExps
 PUNCTUATION_OTHER = ' "\t\u0020\u3000/\\'
@@ -157,7 +158,7 @@ def separate_tags_and_sentence(sentence, tags=[], unescape=False, all_tags=r''):
     starttag = ''
     endtag = ''
 
-    # we search for up to # tags in any sequence at the string borders 
+    # we search for up to # tags in any sequence at the string borders
     # and move them to the array items
     if not all_tags:
         all_tags = '(?:(?:' + '|'.join(
@@ -182,7 +183,7 @@ def separate_tags_and_sentence(sentence, tags=[], unescape=False, all_tags=r''):
             endtag = endtag_r[0] + endtag
             sentence = sentence.replace(endtag_r[0], '')
             continue
-        
+
     for i in tags:
         if re.match(r'^[ \u3000]+$', i[0]): continue
         if unescape:
@@ -424,7 +425,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                             if check_intro(i, i_ln+1) or check_intro(i+1, 0):
                                 is_mergeable[i_ln] = False
                                 continue
-                         
+
                         # check endtag(s) for allowed enders too
                         if (merge_noendtag_re):
                             if item[2] is not None and len(item[2]) >= 1 and bool(merge_noendtag_re.search(item[2])):
@@ -592,6 +593,96 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
         #except:
         #    print("ERROR: Cann't access file for writing: " + new_name)
     return False
+
+
+def _makeComparisonTranslation(self, file_name_base, file_name_translated):
+    """ Compares two of the same files in different languages to produce translations.
+        (files should contain the exact same number of string data)
+    """
+
+    def find_attributes(content) -> List:
+        # find attributes
+        if self.re_a:
+            attributes = []
+            test = self.re_a.findall(content)
+            for match in self.re_a.finditer(content):
+                # check if any of the groups matched
+                match_groups = iter(a for a in match.groups() if a is not None)
+                att_str = next(match_groups, None)
+                while att_str is not None:
+                    if not (self.re_excl and self.re_excl.search(att_str)):
+                        attributes.append(att_str)
+                    else:
+                        if not (self.re_excl and self.re_excl.search(att_str)):
+                            attributes.append(att_str)
+                    att_str = next(match_groups, None)
+        return attributes
+
+    def find_strings(content) -> Tuple[List, List]:
+        strings = []
+        contexts = []
+        # find strings
+        if self.re_s:
+            for match in self.re_s.finditer(content):
+                text_str = ''
+                try:
+                    if self.has_text:
+                        text_str = match.group("text")
+                    else:
+                        text_str = match.group(1)
+                except:
+                    pass
+
+                if len(text_str) > 0:
+                    if not (self.re_excl and self.re_excl.search(text_str)):
+                        strings.append(text_str)
+
+                        if self.has_context:
+                            ctx = match.group("context")
+                            contexts.append(ctx if ctx else '')
+        return (strings, contexts)
+
+    j = 0
+    # don't duplicate attribute strings
+    onlyName = os.path.splitext(file_name_base)[0]
+    attributesB = []
+    stringsB = []
+    attributesT = []
+    stringsT = []
+    contextsB = []
+    contextsT = []
+    ret = True
+
+    contentB = None
+    with open(file_name_base, mode="r", encoding=self.file_enc) as f:
+        contentB = f.read()
+        attributesB = find_attributes(contentB)
+        stringsB, contextsB = find_strings(contentB)
+
+    contentT = None
+    with open(file_name_translated, mode="r", encoding=self.file_enc) as f:
+        contentT = f.read()
+        attributesT = find_attributes(contentT)
+        stringsT, contextsT = find_strings(contentT)
+
+    if len(attributesB) == 0 and len(stringsB) == 0: return False
+    if len(attributesB) != len(attributesT):
+        print("Error: atrributes count mismatch")
+        ret = False
+    else:
+        attributes = list([attributesB[i], attributesT[i]] for i in range(min(len(attributesB), len(attributesT))))
+        used = set()
+        attributes = [x for x in attributes if x[0] and x[0] not in used and (used.add(x[0]) or True)]
+        write_csv_list(f"{onlyName}_comparison{ATTRIBUTES_DB_POSTFIX}" , attributes)
+
+    if len(stringsB) != len(stringsT):
+        print("Error: strings count mismatch")
+        ret = False
+    else:
+        strings = list([stringsB[i], stringsT[i]] for i in range(min(len(stringsB), len(stringsT))))
+        write_csv_list(f"{onlyName}_comparison{STRINGS_DB_POSTFIX}", strings)
+
+    return ret
 
 
 def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
@@ -1018,7 +1109,7 @@ def _applyFixesToTranslation(self, transl_fn, is_string=True):
 def _getOutputName(self, file_name):
     """ Returns output name given a file name """
     outputName = ''
-    
+
     if self.use_game_dir:
         # WARNING: backup game files before owerwriting
         outputName = file_name.replace(self.work_dir.rstrip(os.sep), self.game_dir.rstrip(os.sep))
@@ -1063,14 +1154,14 @@ def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
 
             if self.escape_dquo_a:
                 tmp_str = tmp_str.replace('"', '\\"')
-            
+
             _offset_mode = len(line) >= 3 and line[2]
             _enc = self.file_enc
             _filler = "\0"
 
             if _offset_mode:
                 _a = [l.strip() for l in line[2].split(',') if l.strip()]
-                #example of the third csv column (offset, encoding, filler) is: 
+                #example of the third csv column (offset, encoding, filler) is:
                 #  0x0011aa[, utf-16le][, \x20]
                 if len(_a) > 0:
                     offset = int(_a[0], 16)
@@ -1096,7 +1187,7 @@ def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
             pathOut = os.path.dirname(outputName)
             if pathOut != '' and not os.path.exists(pathOut):
                 os.makedirs(pathOut, exist_ok=True)
-    
+
             with open(outputName, 'wb') as o:
                 o.write(bstr)
             return True
@@ -1480,6 +1571,7 @@ class FileTranslate:
     intersectAttributes = _intersectAttributes
     replaceInTranslations = _replaceInTranslations
     makeDictionary = _makeDictionary
+    makeComparison = _makeComparisonTranslation
     createRepo = _createRepo
     updateRepo = _updateRepo
     archiveRepo = _archiveRepo
@@ -1721,6 +1813,7 @@ def main():
     optgroup.add_argument("-fix", help="Revert replacement tags and apply translation_dictionary_out to translation", action="store_true")
     optgroup.add_argument("-cut", help="Add cut-mark character after N-letters", type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument("-a", help="Apply translation to original files (default: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
+    optgroup.add_argument("-cmp", help="Make translations from two language versions (root and to_compare folders)", action="store_true")
 
     replgroup = parser.add_argument_group("replacement")
     replgroup.add_argument("-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)", action="store_true")
@@ -1788,11 +1881,13 @@ def main():
     if app_args.g and len(app_args.g) > 0:
         print("Game engine: \033[1m" + app_args.g + "\033[0m")
 
+    do_merge = not app_args.nomerge
+
     if regexp_excl:
-        print("Exclusion option enabled, check expression:\n  ", regexp_excl.encode('unicode_escape').decode('mbcs'))
+        print("Exclusion option enabled, expression:\n  ", regexp_excl.encode('unicode_escape').decode('mbcs'))
     if regexp_mque:
-        print("Merging option enabled, check expression(s):\n  ", '\n  '.join(regexp_mque.encode('unicode_escape').decode('mbcs').split('||')))
-            
+        print("Merging option", ( "enabled, expression(s):\n  " + '\n  '.join(regexp_mque.encode('unicode_escape').decode('mbcs').split('||')) ) if do_merge else "disabled")
+
     if len(patterns) == 0:
         patterns = list("*." + i for i in text_exts)
     image_patterns = []
@@ -1823,8 +1918,6 @@ def main():
 
         if app_args.remnl:
             print(" (No newlines in source strings)")
-
-        do_merge = not app_args.nomerge
 
         # MTL bans you if you free-use it faster than N (>2000) chars per T (>20) sec
         # The following methods can be implemented within a custom translator's class
@@ -2026,7 +2119,8 @@ def main():
             continue
         fileAllCount += 1
         res = False
-        base_name = currentFile.replace(working_dir, '') + (" (%d of %d)" % (fileAllCount, totalCount))
+        base_name = currentFile.replace(working_dir, '')
+        base_name_print = f"{base_name} ({fileAllCount} of {totalCount})"
         currentFile = os.path.abspath(currentFile)
         only_name = os.path.splitext(currentFile)[0]
         if (os.path.basename(__file__) in currentFile) or ("replacers.csv" in currentFile) or ("requirements" in currentFile):
@@ -2036,39 +2130,44 @@ def main():
                 FT.file_enc = detect_encoding(currentFile)
 
         if app_args.a:
-            print("Applying translation to " + base_name + ' ')
+            print("Applying translation to " + base_name_print + ' ')
             res = FT.applyTranslationsToFile(currentFile, mode=app_args.a)
+        elif app_args.cmp:
+            currentToCompare = currentFile.replace(base_name, f"\\to_compare{base_name}")
+            if os.path.exists(currentFile) and os.path.exists(currentToCompare):
+                print("Comparing with \\to_compare\\ " + base_name_print + ' ...\n', end='', flush=True)
+                res = FT.makeComparison(currentFile, currentToCompare)
         elif app_args.t or app_args.tu:
             if app_args.t:
-                print("Translating " + base_name + ' ...\n', end='', flush=True)
+                print("Translating " + base_name_print + ' ...\n', end='', flush=True)
             else:
-                print("Updating translation of " + base_name + ' ...\n', end='', flush=True)
+                print("Updating translation of " + base_name_print + ' ...\n', end='', flush=True)
             res = FT.translateCSV(MT, only_name + ATTRIBUTES_DB_POSTFIX, False, app_args.tu)
             #print(';', end='', flush=True)
             res = True if FT.translateCSV(MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
             #res = True if profile_func(translateCSV, MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
         elif app_args.ocr:
             print('')
-            print("Performing OCR " + base_name + ' ', end='', flush=True)
+            print("Performing OCR " + base_name_print + ' ', end='', flush=True)
             res = process_image(OCR, currentFile)
         elif app_args.px or app_args.rx:
-            print("Fixing translation of " + base_name + ' ')
+            print("Fixing translation of " + base_name_print + ' ')
             res = prepare_csv_excel(only_name + ATTRIBUTES_DB_POSTFIX, app_args.rx)
             res = True if prepare_csv_excel(only_name + STRINGS_DB_POSTFIX, app_args.rx) else res
         elif app_args.fix:
-            print("Fixing translation of " + base_name + ' ')
+            print("Fixing translation of " + base_name_print + ' ')
             res = FT.applyFixesToTranslation(only_name, False)
             res = True if FT.applyFixesToTranslation(only_name) else res
         elif app_args.ca and app_args.gd:
-            print("Validating attributes of " + base_name, end='', flush=True)
+            print("Validating attributes of " + base_name_print, end='', flush=True)
             res = strip_attr_matching_file(only_name + ATTRIBUTES_DB_POSTFIX, all_game_fn)
             print('')
         elif app_args.i or app_args.u:
             print('')
             if app_args.u:
-                print("Upgrading strings " + base_name + ' :', end='', flush=True)
+                print("Upgrading strings " + base_name_print + ' :', end='', flush=True)
             else:
-                print("Making strings " + base_name + ' :', end='', flush=True)
+                print("Making strings " + base_name_print + ' :', end='', flush=True)
             res = FT.makeTranslatableStrings(currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '')
         elif app_args.rit:
             for csv_file in [(only_name + ATTRIBUTES_DB_POSTFIX), (only_name + STRINGS_DB_POSTFIX)]:
