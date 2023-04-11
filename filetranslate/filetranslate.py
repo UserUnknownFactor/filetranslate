@@ -1,7 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 # The project requires Python 3.7 at the least
 
-import os, sys
+import os, sys, glob
 from typing import Tuple, List
 # add curent file's directory to path to include modules from the same folder
 sys.path.append(os.path.dirname(__file__))
@@ -58,7 +58,7 @@ MODULE_NAME = "filetranslate"
 try:
     import git
     from git import RemoteProgress
-    GIT_AUTHOR = git.Actor(MODULE_NAME, "noreply@example.com")
+    GIT_AUTHOR = git.Actor(MODULE_NAME, "@filetranslate")
     USE_GIT = True # change this to manually set the state
 except:
     pass
@@ -645,6 +645,11 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated):
     j = 0
     # don't duplicate attribute strings
     onlyName = os.path.splitext(file_name_base)[0]
+
+    # check if multilple files with only different ext exist
+    if len(glob.glob(onlyName + '.*')) > 1:
+        onlyName = file_name_base
+
     attributesB = []
     stringsB = []
     attributesT = []
@@ -690,7 +695,13 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
     """
     j = 0
     # don't duplicate attribute strings
-    onlyName = os.path.splitext(file_name)[0]
+    onlyName = os.path.splitext(file_name)
+    #onlyExt= onlyName[1]
+    onlyName = onlyName[0]
+
+    # check if multilple files with only different ext exist
+    if len(glob.glob(onlyName + '.*')) > 1:
+        onlyName = file_name
 
     if upgrade:
         new_name = onlyName + ATTRIBUTES_DB_POSTFIX
@@ -710,6 +721,7 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
     strings = []
     string_tags = dict()
     contexts = []
+
     with open(file_name, mode="r", encoding=self.file_enc) as f:
         content = f.read()
 
@@ -1200,12 +1212,17 @@ def _applyTranslationsToFile(self, file_name, mode=1) -> bool:
 
     splitName = os.path.splitext(file_name)
     onlyName = splitName[0]
-    onlyExt = splitName[1][1:]
+    onlyExt = splitName[1].lower()
 
-    if onlyExt == "exe" or onlyExt == "dll":
+    if onlyExt == ".exe" or onlyExt == ".dll":
         return self.applyTranslationsToExe(file_name, mode)
 
-    if not (os.path.exists(onlyName + STRINGS_DB_POSTFIX) or os.path.exists(onlyName + ATTRIBUTES_DB_POSTFIX)): return False
+    # check if multilple files with only different ext exist
+    if len(glob.glob(onlyName + '.*')) > 1:
+        onlyName = file_name
+
+    if not (os.path.exists(onlyName + STRINGS_DB_POSTFIX) or os.path.exists(onlyName + ATTRIBUTES_DB_POSTFIX)):
+        return False
 
     #try:
     #If we write to the same folder make a backup
