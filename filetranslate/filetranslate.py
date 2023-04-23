@@ -595,7 +595,7 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
     return False
 
 
-def _makeComparisonTranslation(self, file_name_base, file_name_translated):
+def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_duplicate=False):
     """ Compares two of the same files in different languages to produce translations.
         (files should contain the exact same number of string data)
     """
@@ -647,7 +647,7 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated):
     onlyName = os.path.splitext(file_name_base)[0]
 
     # check if multilple files with only different ext exist
-    if len(glob.glob(onlyName + '.*')) > 1:
+    if name_duplicate:
         onlyName = file_name_base
 
     attributesB = []
@@ -690,7 +690,7 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated):
     return ret
 
 
-def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
+def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_duplicate=False):
     """ Creates or upgrades translation database from a game scenario file.
     """
     j = 0
@@ -700,7 +700,7 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA"):
     onlyName = onlyName[0]
 
     # check if multilple files with only different ext exist
-    if len(glob.glob(onlyName + '.*')) > 1:
+    if name_duplicate:
         onlyName = file_name
 
     if upgrade:
@@ -1205,7 +1205,7 @@ def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
             return True
     return False
 
-def _applyTranslationsToFile(self, file_name, mode=1) -> bool:
+def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False) -> bool:
     """ Applies translations from translation databases to game files and images
         and places results in translation_out directory.
     """
@@ -1218,7 +1218,7 @@ def _applyTranslationsToFile(self, file_name, mode=1) -> bool:
         return self.applyTranslationsToExe(file_name, mode)
 
     # check if multilple files with only different ext exist
-    if len(glob.glob(onlyName + '.*')) > 1:
+    if name_duplicate:
         onlyName = file_name
 
     if not (os.path.exists(onlyName + STRINGS_DB_POSTFIX) or os.path.exists(onlyName + ATTRIBUTES_DB_POSTFIX)):
@@ -2146,14 +2146,19 @@ def main():
         if (app_args.i or app_args.a) and (not FT.file_enc or FT.file_enc == ''):
                 FT.file_enc = detect_encoding(currentFile)
 
+        hasDuplicate = False
+        if len(glob.glob(only_name + '.*')) > 1:
+            only_name = currentFile
+            hasDuplicate = True
+
         if app_args.a:
             print("Applying translation to " + base_name_print + ' ')
-            res = FT.applyTranslationsToFile(currentFile, mode=app_args.a)
+            res = FT.applyTranslationsToFile(currentFile, mode=app_args.a, name_duplicate=hasDuplicate)
         elif app_args.cmp:
             currentToCompare = currentFile.replace(base_name, f"\\to_compare{base_name}")
             if os.path.exists(currentFile) and os.path.exists(currentToCompare):
                 print("Comparing with \\to_compare\\ " + base_name_print + ' ...\n', end='', flush=True)
-                res = FT.makeComparison(currentFile, currentToCompare)
+                res = FT.makeComparison(currentFile, currentToCompare, name_duplicate=hasDuplicate)
         elif app_args.t or app_args.tu:
             if app_args.t:
                 print("Translating " + base_name_print + ' ...\n', end='', flush=True)
@@ -2185,7 +2190,7 @@ def main():
                 print("Upgrading strings " + base_name_print + ' :', end='', flush=True)
             else:
                 print("Making strings " + base_name_print + ' :', end='', flush=True)
-            res = FT.makeTranslatableStrings(currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '')
+            res = FT.makeTranslatableStrings(currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '', name_duplicate=hasDuplicate)
         elif app_args.rit:
             for csv_file in [(only_name + ATTRIBUTES_DB_POSTFIX), (only_name + STRINGS_DB_POSTFIX)]:
                 tmp = FT.replaceInTranslations(csv_file, old_re, new_str, app_args.f)

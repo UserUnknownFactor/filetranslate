@@ -60,6 +60,7 @@ def merge_dicts(*dict_args):
 
 def preprocess_in(lines, replace_cr):
     for line in lines:
+        #if line == '': continue
         if replace_cr:
             yield line.replace(CARRIAGE_RETURN, CARRIAGE_RETURN_REPLACER)
         else:
