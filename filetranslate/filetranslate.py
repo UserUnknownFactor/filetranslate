@@ -211,7 +211,11 @@ def split_reader_to_array(reader_array, tags=[], remove_newlines=False):
     pos = 0
     old_pos = 0
     for line in reader_array:
-        tmp = line[0]
+        try:
+            tmp = line[0]
+        except Exception as e:
+            print(tmp)
+            raise e
         if remove_newlines:
             tmp = tmp.replace('\r\n', '').replace('\n', '')
         arr = tmp.splitlines()
@@ -254,7 +258,10 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
     original_l = sum(i[1] for i in indexed_array if (not is_partial or (i[0] in original_indexes)))
 
     if translations_l != original_l:
-        raise Exception(f"ERROR: number of translations ({translations_l}) doesn't match originals ({original_l})!")
+        write_csv_list('error.csv', [[indexed_array[i][2] if i < original_l else '', indexed_array[i][2] if i < original_l else '', translations_arr[i] if i < translations_l else ''] for i in range(max(translations_l, original_l))])
+        raise Exception(f"ERROR: number of translations ({translations_l}) doesn't match originals ({original_l})!\n" +
+            "Check if MTL returned proper number of lines and original .csv is valid\n" +
+            "(no special characters like \\r, orphan lines etc.)\n\nBoth arrays are written to error.csv...")
 
     i = 0
     for row in indexed_array:
@@ -672,7 +679,7 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
 
     if len(attributesB) == 0 and len(stringsB) == 0: return False
     if len(attributesB) != len(attributesT):
-        print("Error: atrributes count mismatch")
+        print("Error: attributes count mismatch")
         ret = False
     else:
         attributes = list([attributesB[i], attributesT[i]] for i in range(min(len(attributesB), len(attributesT))))
@@ -1271,9 +1278,10 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False) -> b
             progress_divisor = max(1, len_split_torg_text // 100)
 
             if self.has_text and self.context_gn > 1 and self.has_context and self.context_gn:
-                gn = self.context_gn + 2
+                ci = self.context_gn # we need only context as it's only embedded group
+                gc = re_s.groups
                 split_torg_text = [a for i, a in enumerate(split_torg_text)
-                                   if a is not None and (i != self.context_gn and (i+2) % gn != 0)]
+                                   if a is not None and i % (gc + 1) != ci]
 
             last_pos = 0
             for row in reader:
@@ -1878,6 +1886,7 @@ def main():
     regexp_mque = None
     lang_src, lang_dest = app_args.lang.split('-')
 
+    found_engine = is_pattern_manual and (regexp_attr or regexp_txt)
     if os.path.isfile(regexp_db):
         if app_args.g and len(app_args.g) > 0:
             with open(regexp_db, 'r', newline='', encoding=CSV_ENCODING) as f:
@@ -1893,10 +1902,17 @@ def main():
                         if len(line) > 5 and not regexp_tag: regexp_tag = line[5].replace('\n', '')
                         if len(line) > 6 and not regexp_excl: regexp_excl = line[6].replace('\n', '')
                         if len(line) > 7 and not regexp_mque: regexp_mque = line[7].replace('\n', '')
+                        found_engine = True
                         break
+    elif not found_engine:
+        print("Error: No game database \033[1mgame_regexps.csv\033[0m found")
+        sys.exit(1)
 
-    if app_args.g and len(app_args.g) > 0:
-        print("Game engine: \033[1m" + app_args.g + "\033[0m")
+    if app_args.g and len(app_args.g) > 0 and found_engine:
+        print(f"Game engine: \033[1m{app_args.g}\033[0m")
+    elif not found_engine:
+        print(f"Error: No game engine \033[1m{app_args.g}\033[0m registered in game_regexps.csv")
+        sys.exit(1)
 
     do_merge = not app_args.nomerge
 
@@ -2207,7 +2223,7 @@ def main():
     if MT is not None: MT.on_finish()
     print("\nTotal files passed             : " + str(fileCount))
 
-    if USE_GIT and not app_args.nogit:
+    if USE_GIT and not app_args.nogit and not app_args.a:
         try:
             if app_args.i:
                 print("Creating or updating Git repo... ", end='', flush=True)
