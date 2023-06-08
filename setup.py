@@ -22,7 +22,7 @@ with open(path.join(this_directory, 'requirements.txt')) as f: requirements = f.
 
 setup(
     name='filetranslate',
-    version='0.9.8',
+    version='0.9.9',
     url='https://github.com/UserUnknownFactor/filetranslate',
     license='MIT',
     author='UserUnknownFactor',
@@ -35,8 +35,8 @@ setup(
         'Intended Audience :: Other Audience',
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
         'Topic :: Games/Entertainment',
     ],
     packages = find_packages(),

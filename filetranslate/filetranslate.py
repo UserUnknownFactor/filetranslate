@@ -10,7 +10,7 @@ import re, argparse, textwrap, html, hashlib, datetime
 import itertools, functools, pathlib, fnmatch
 from shutil import move#, copyfile
 from time import sleep
-from PIL import Image
+from PIL import Image, ImageFont
 from maxcolor import MaxColor
 from language_fn import *
 from service_fn import *
@@ -34,6 +34,7 @@ MAX_BORDER_TAGS = 4
 MIN_INFILE_INTERSECTIONS = 2
 MIN_LENGTH = 1 # minimum text length of all strings in a translation file
 COMMENT_TAG = "//"
+DEFAULT_CUT_FONT = ("msgothic.ttc", 24)
 
 ENABLE_CACHE = False
 cache = None
@@ -52,7 +53,7 @@ try:
 except ImportError:
     pass
 
-from ocrspace import OCRspace as OCRservice
+#from ocrspace import OCRspace as OCRservice
 
 MODULE_NAME = "filetranslate"
 try:
@@ -258,7 +259,9 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
     original_l = sum(i[1] for i in indexed_array if (not is_partial or (i[0] in original_indexes)))
 
     if translations_l != original_l:
-        write_csv_list('error.csv', [[indexed_array[i][2] if i < original_l else '', indexed_array[i][2] if i < original_l else '', translations_arr[i] if i < translations_l else ''] for i in range(max(translations_l, original_l))])
+        write_csv_list('error.csv', [[indexed_array[i][2] if i < original_l else '',
+            indexed_array[i][2] if i < original_l else '',
+            translations_arr[i] if i < translations_l else ''] for i in range(max(translations_l, original_l))])
         raise Exception(f"ERROR: number of translations ({translations_l}) doesn't match originals ({original_l})!\n" +
             "Check if MTL returned proper number of lines and original .csv is valid\n" +
             "(no special characters like \\r, orphan lines etc.)\n\nBoth arrays are written to error.csv...")
@@ -287,6 +290,18 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
 
     return indexed_array
 
+def bbox_from_coords(coords):
+    xs = [i[0] for i in coords]
+    ys = [i[1] for i in coords]
+
+    left = int(min(xs))
+    right = int(max(xs))
+    top = int(min(ys))
+    bottom = int(max(ys))
+
+    width  = right - left
+    height = bottom - top
+    return left,top,width,height
 
 def write_svg(image, boxes, texts):
     """ Creates translation-ready SVG file from an image, bounding boxes and their text.
@@ -345,7 +360,6 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
 
         max_chars = trn_svc.get_char_limit()
         string_tags = read_csv_list(os.path.join(self.work_dir, REPLACEMENT_TAG_DB))
-        tr_dict_in = read_csv_list(os.path.join(self.work_dir, TRANSLATION_IN_DB))
         upgraded_lines = []
         is_translated = False
 
@@ -357,16 +371,19 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 reader_ind = cache.get(file_name)
             if reader_ind is None:
                 #print(TAB_REPLACER, end='', flush=True)
-                reader_ind = split_reader_to_array(list(csv.reader(f, DIALECT_TRANSLATION)), string_tags, self.remove_newlines)
+                reader_ind = split_reader_to_array(
+                    list(csv.reader(f, DIALECT_TRANSLATION)), string_tags, self.remove_newlines)
                 if ENABLE_CACHE:
                     cache.set(file_name, reader_ind, expire=CACHE_EXPIRY_TIME)
 
             num_lines = 0
             try:
-                num_lines = sum(1 for row in reader_ind if len(row)>4 and row[4] is None or len(row[4]) == 0) if upgrade else len(reader_ind)
+                num_lines = sum(1 for row in reader_ind if len(row)>4 and row[4] is None or len(
+                                row[4]) == 0) if upgrade else len(reader_ind)
             except IndexError as e:
                 del cache[file_name]
-                raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]} of {os.path.basename(file_name)}")
+                raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]} of"+
+                                " {os.path.basename(file_name)}")
             progress_divisor = max(1, num_lines // 1000)
             print_progress(1, 100, type_of_progress=4)
             to_transl = []
@@ -396,12 +413,6 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                     #continue
                 if upgrade: upgraded_lines.append(i)
 
-                # apply pre-translations from dictionary [jpn] -> [jpn; eng]
-                for dict_line in tr_dict_in:
-                    if len(dict_line) < 1: continue
-                    replacer = '' if (dict_line[1] == None) else dict_line[1]
-                    repl_line = re.sub(dict_line[0], replacer, repl_line, flags=re.U)#|re.I|re.M)
-
                 # NOTE: Additional replacements should be done in a translation service class
                 # or with translation_in. Batch translation in parts below max_chars:
                 repl_line_len = len(repl_line)
@@ -424,7 +435,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                                 if idx + 1 > len(reader_ind) or in_idx + 1 > len(reader_ind[idx][3]): return False
                                 check_item = reader_ind[idx][3][in_idx]
                                 # check if nostarter is in starttags or in item's translatable text (0 and 1 array items)
-                                is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (merge_nostarter_re.search(check_item[0])))
+                                is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (
+                                    merge_nostarter_re.search(check_item[0])))
                                 is_in_text = bool(check_item[1] and merge_nostarter_re.search(check_item[1]))
                                 return (is_in_tag or is_in_text)
 
@@ -442,7 +454,9 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                                 continue
 
                         # check text for allowed ender, if it's long enough and allowed to merge
-                        is_mergeable[i_ln] = bool(item[1] and merge_ender_re.search(item[1])) and len(item[1]) > 5 and allow_merge
+                        is_mergeable[i_ln] = bool(
+                                item[1] and merge_ender_re.search(item[1])
+                            ) and len(item[1]) > 4 and allow_merge
                         if mergeable_lines > 1 and i_ln < len(reader_ind[i][3]) - 1 and not reader_ind[i][3][i_ln+1][1]:
                             is_mergeable[i_ln] = False # empty next line marks end of the sentence
                         if not type_str:
@@ -476,7 +490,13 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
 
                 changed_lines += 1
                 if changed_lines % progress_divisor == 0:
-                    print_progress(changed_lines, num_lines, type_of_progress=((1 if type_str else 2) if ttype > 0 else 3), start_from=2, end_with=98)
+                    print_progress(
+                        changed_lines,
+                        num_lines,
+                        type_of_progress=((1 if type_str else 2) if ttype > 0 else 3),
+                        start_from=2,
+                        end_with=98
+                    )
 
         # NOTE: translation should be checked for proper line count in the MT class or its override
         if not len(translated):
@@ -489,6 +509,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             for row in reader_ind:
                 i = row[0]
                 out = reader_ind[i][4]
+                #if is_in_language(out, "JA"):
+                    #out = ''
                 writer.writerow([reader_ind[i][2], out] + reader_ind[i][5:])
 
         print_progress(100, 100)
@@ -499,20 +521,27 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
 def process_image(ocr_svc, file_name):
     """ Creates OCR texts database file from a game image.
     """
+
     onlyName = os.path.splitext(file_name)[0]
-    ocr_strings_fn = onlyName + STRINGS_DB_POSTFIX
+    ocr_strings_fn = file_name  + STRINGS_DB_POSTFIX # needs extension since it duplicates name of the image
     if os.path.isfile(onlyName + ".svg") or os.path.isfile(ocr_strings_fn):
         return False
 
-    ocr_boxes, ocr_lines = ocr_svc.ocr(file_name)
+    ocr_lines = ocr_svc.ocr(file_name)
+    if not len(ocr_lines): return False
     if len(ocr_lines):
-        write_svg(file_name, ocr_boxes, ocr_lines)
-        print("%d %s" % (len(ocr_lines), "OCR strings."), end='')
+        ocr_lines = ocr_lines[0]
+        if not len(ocr_lines) or not len(
+                [line[1][0] for line in ocr_lines if line[1][0] and line[1][0] != '-']):
+            return False
+        write_svg(file_name, [bbox_from_coords(line[0]) for line in ocr_lines], [line[1][0] for line in ocr_lines])
+
+        print(f"{len(ocr_lines)} OCR strings.", end='')
         try:
             with open(ocr_strings_fn, 'w', newline='', encoding=CSV_ENCODING) as f:
                 writer = csv.writer(f, DIALECT_TRANSLATION)
                 for line in ocr_lines:
-                    writer.writerow([line, ''])
+                    writer.writerow([line[1][0], ''])
         except:
             print("ERROR: Cann't access file for writing:", ocr_strings_fn)
             return False
@@ -742,7 +771,8 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_dup
                     if len(att_str) == 0:
                         att_str = next(match_groups, None)
                         continue
-                    if att_str and len(att_str)>0 and (len(lang) and is_in_language(att_str, lang)) and att_str not in attributes:
+                    if att_str and len(att_str)>0 and (
+                            len(lang) and is_in_language(att_str, lang)) and att_str not in attributes:
                         if self.re_t:
                             for tag in self.re_t.findall(att_str):
                                 if (tag not in old_string_tags) and (tag not in string_tags) and (tag not in tr_dict_in):
@@ -837,15 +867,32 @@ def prepare_csv_excel(file_name, restore=True):
     write_csv_list(file_name, old_list, ftype=(DIALECT_TRANSLATION if restore else DIALECT_EXCEL))
     return True
 
-def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHAR, use_bytelength=False, skip_processed=False, withattributes=False):
+MEASURED_FONT: ImageFont.FreeTypeFont = None
+def _get_str_len(text, is_px_width=False, fontname=DEFAULT_CUT_FONT[0], fontsize=DEFAULT_CUT_FONT[1]) -> int:
+    """Returns string length either in pixels or in characters."""
+    global MEASURED_FONT
+    if not MEASURED_FONT and is_px_width:
+        MEASURED_FONT = ImageFont.truetype(os.path.join(os.environ["WINDIR"], "fonts", fontname), fontsize)
+    if is_px_width:
+        return MEASURED_FONT.getlength(text)
+    return len(text)
+
+def _applyCutMarks(self, interval:int=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHAR, use_bytelength=False,
+                   skip_processed=False, include_attr=False, is_px_width=False, font_size=DEFAULT_CUT_FONT[1],
+                   font_name=DEFAULT_CUT_FONT[0]):
     """ Cuts a string into interval-sized parts using `cut_chrs`.
         If `interval == 1`, original string's (byte-)length is used.
         The `cut_ch`r can be the engine's line separator or a unicode marker for manual processing.
         Can process strings based on their byte length in the provided encoding.
+        If the interval is >128 it's considered to be in pixels regardless of is_px_width,
+        which allows checking text by its pixel length in the given font.
+        (Character-based interval is usually low for reader's convenience, not 100+ so whatever).
     """
     if not interval: return
+    if interval > 128 and not is_px_width:
+        is_px_width = True
     csv_files = list(find_files(self.work_dir, ['*' + STRINGS_DB_POSTFIX]))
-    if withattributes:
+    if include_attr:
         csv_files += list(find_files(self.work_dir, ['*' + ATTRIBUTES_DB_POSTFIX]))
     nfile = 0
     nall = len(csv_files)
@@ -881,8 +928,8 @@ def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHA
                             j = 0
                         j += 1
                 else:
-                    tmp_str_len = len(tmp_str)
-                    mnd_chr_len = len(mind_chr)
+                    tmp_str_len = _get_str_len(tmp_str, is_px_width, font_name, font_size)
+                    mnd_chr_len = _get_str_len(mind_chr, is_px_width, font_name, font_size)
                     while tmp_str_len > interval:
                         where = interval
                         if (mind_chr is not None):
@@ -901,11 +948,11 @@ def _applyCutMarks(self, interval=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE_CHA
                             tmp_arr.append(tmp_str[:where])
                             tmp_str = tmp_str[where:]
                         j += 1
-                        tmp_str_len = len(tmp_str)
+                        tmp_str_len = _get_str_len(tmp_str, is_px_width, font_name, font_size)
                 if len(tmp_arr):
                     if len(tmp_str): tmp_arr.append(tmp_str) # add last part to array
                     transl_line = cut_chrs.join(tmp_arr)
-            else:
+            else: # if inteval <= 1 cut to the original length
                 if use_bytelength:
                     tmp_arr = []
                     j = 0
@@ -1027,33 +1074,52 @@ def _makeDictionary(self, check_type=2, csv_files=[]):
     print("found", len(new_dictionary), "words.\nWriting dictionary as: " + dct_file)
     write_csv_list(dct_file, new_dictionary)
 
-def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None):
+def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None, repl_cond=None, excl_cond=None):
     """ Replaces by RegExp in translations.
     """
     is_changed = False
     a_file_l = read_csv_list(a_file)
+    if repl_cond:
+        repl_cond = re.compile(repl_cond, re.M|re.U)
+    if excl_cond:
+        excl_cond = re.compile(excl_cond, re.M|re.U)
     cnt = 0
     repl_file_l = None
+    # precompile all regexps from replacers file
     if repl_file:
         repl_file_l = read_csv_list(repl_file)
         if len(repl_file_l) > 0:
             for i, repl in enumerate(repl_file_l):
                 repl_file_l[i][0] = re.compile(repl[0], re.M|re.U)
+                if len(repl_file_l[i]) > 2 and repl[2]:
+                    repl_file_l[i][2] = re.compile(repl[2], re.M|re.U)
+                if len(repl_file_l[i]) > 3 and repl[3]:
+                    repl_file_l[i][3] = re.compile(repl[3], re.M|re.U)
         else:
             repl_file_l = None
 
     for i, translation in enumerate(a_file_l):
         if len(translation) < 2 or not translation[1]: continue
+
         tmp = translation[1]
         if repl_file_l:
             for repl in repl_file_l:
-                tmp = repl[0].sub(repl[1], tmp)
+                repl_cond = repl[2] if len(repl) > 2 and repl[2] else None
+                excl_cond = repl[3] if len(repl) > 3 and repl[3] else None
+                if not repl_cond or (repl_cond and repl_cond.search(translation[0])):
+                    if not excl_cond or (excl_cond and not excl_cond.search(translation[0])):
+                        tmp = repl[0].sub(repl[1], tmp)
         else:
-            tmp = old_re.sub(new_repl, tmp)
+            if not repl_cond or (repl_cond and repl_cond.search(translation[0])):
+                if not excl_cond or (excl_cond and not excl_cond.search(translation[0])):
+                    tmp = old_re.sub(new_repl, tmp)
+
         if tmp != translation[1]:
             a_file_l[i][1] = tmp
             cnt += 1
-            if not is_changed: is_changed = True
+            if not is_changed:
+                is_changed = True
+
     if is_changed:
         write_csv_list(a_file, a_file_l)
     return cnt
@@ -1476,7 +1542,8 @@ def _createRepo(self):
 
 class git_progress_print(RemoteProgress):
     def update(self, op_code, cur_count, max_count=None, message=''):
-        print("\r%10s %03d %3d %3f %20s" % (op_code, cur_count, max_count, cur_count / (max_count or 100.0), message or "NO MESSAGE"), end='', flush=True)
+        print("\r%10s %03d %3d %3f %20s" % (op_code, cur_count, max_count, cur_count / (max_count or 100.0),
+                                            message or "NO MESSAGE"), end='', flush=True)
 
 def _updateRepo(self, tag=None, add_new=False, to_origin=0, silent=True):
     """Updates project files in its git repository."""
@@ -1747,14 +1814,8 @@ def make_text_to_translate(source_lines, translation_types):
 
 # ---------------------------------------------- plans -----------------------------------------------
 # TODO:
-# - [x] Exlude strings from adding to translation database by regexp in game_regexps.csv.
-# - [X] Support for translating raw binary blobs with {bin_fileanme}_strings.csv
 # - [ ] Option to apply string cutting only in -a mode.
-# - [X] Configuration to enable for string cutting as binary / keep byte-length
 # - [ ] Translation from/to other languages maybe.
-# - [x] Merge N following incomplete sentences to the first incomplete. Check by 、, Make 2 arrays before translation: length of split N + translatable strings T = > N=1 =  nosplit; N=2+ => reset and replace N-1 next strings with remainders from first split N times by nearest space; 0 => skip string translation
-# - [X] Detect midsentence token in last characters and end-tags for merging sentences
-
 # ----------------------------------------------- main -----------------------------------------------
 def main():
     working_dir = os.path.abspath(os.getcwd())
@@ -1812,18 +1873,32 @@ def main():
                  DSV file with replacements for -fix option (eng → eng);
          """))
 
-    parser.add_argument("-e", help="Original encoding (ex: cp932, cp1252 etc; utf-8 by default)", default='', metavar=("encoding"))
-    parser.add_argument("-p", help=f"File patterns (ex: {def_pat})", default='', metavar=("file_patterns"))
-    parser.add_argument("-g", default=game_engine, help=f"Game engine preset ({project_types})", metavar=("game_engine"))
-    parser.add_argument("-lang", default='JA-EN', help=f"Translation direction pair SRC-DEST (ex: JA-EN)", metavar=("game_language"))
-    #parser.add_argument("-d", help="Directory of the source files (current by default)", default=working_dir, metavar=("default_path"))
-    parser.add_argument("-gd", default=game_directory, help="Directory of the original game files", metavar=("game_files_path"))
-    parser.add_argument("-cm", default=CUT_CHARACTER, help="Cut-mark string or character", metavar=("cut_mark"))
-    parser.add_argument("-nomerge", help="Don't merge partial sequential strings during translation", action="store_true")
-    parser.add_argument("-remnl", help="Remove newlines from source strings", action="store_true")
-    parser.add_argument("-images", help="Process image files", action="store_true")
+    parser.add_argument(
+        "-e", help="Original encoding (ex: cp932, cp1252 etc; utf-8 by default)", default='', metavar=("encoding"))
+    parser.add_argument(
+        "-p", help=f"File patterns (ex: {def_pat})", default='', metavar=("file_patterns"))
+    parser.add_argument(
+        "-g", default=game_engine, help=f"Game engine preset ({project_types})", metavar=("game_engine"))
+    parser.add_argument(
+        "-lang", default='JA-EN', help=f"Translation direction pair SRC-DEST (ex: JA-EN)", metavar=("language_pair"))
+    #parser.add_argument(
+    #   "-d", help="Directory of the source files (current by default)", default=working_dir, metavar=("default_path"))
+    parser.add_argument(
+        "-gd", default=game_directory, help="Directory of the original game files", metavar=("game_files_path"))
+    parser.add_argument(
+        "-cm", default=CUT_CHARACTER, help="Cut-mark string or character", metavar=("cut_mark"))
+    parser.add_argument(
+        "-nomerge", help="Don't merge partial sequential strings during translation", action="store_true")
+    parser.add_argument(
+        "-remnl", help="Remove newlines from source strings", action="store_true")
+    parser.add_argument(
+        "-images", help="Process image files", action="store_true")
+    parser.add_argument(
+        "-font", default="msgothic.ttc,24",
+        help=f"Default font for pixel width measurement when -cut >128 (default: msgothic.ttc,24)",
+        metavar=("cut_font_info"))
 
-    regroup = parser.add_argument_group("regexps")
+    regroup = parser.add_argument_group("file regexps")
     regroup.add_argument("-ra", help="RegExp for attributes", default='', metavar=("attr_regexp"))
     regroup.add_argument("-rs", help="RegExp for texts", default='', metavar=("text_regexp"))
     regroup.add_argument("-rt", help="RegExp for text tags", default='', metavar=("tag_regexp"))
@@ -1833,41 +1908,78 @@ def main():
     optgroup.add_argument("-i", help="Initialize translation files", action="store_true")
     optgroup.add_argument("-u", help="Update translation files for new strings", action="store_true")
     optgroup.add_argument("-ocr", help="Perform text recognition for images", action="store_true")
-    optgroup.add_argument("-t", help="Perform initial string translation", type=int, nargs='?', const=1, default=0, metavar="N")
-    optgroup.add_argument("-tu", help="Perform translation of new strings", type=int, nargs='?', const=1, default=0, metavar="N")
-    optgroup.add_argument("-fix", help="Revert replacement tags and apply translation_dictionary_out to translation", action="store_true")
-    optgroup.add_argument("-cut", help="Add cut-mark character after N-letters", type=int, nargs='?', const=1, default=0, metavar="N")
-    optgroup.add_argument("-a", help="Apply translation to original files (default: 1: skip existing, 2:replace; apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)", type=int, nargs='?', const=1, default=0, metavar="mode")
-    optgroup.add_argument("-cmp", help="Make translations from two language versions (root and to_compare folders)", action="store_true")
+    optgroup.add_argument(
+        "-t", help="Perform initial string translation", type=int, nargs='?', const=1, default=0, metavar="N")
+    optgroup.add_argument(
+        "-tu", help="Perform translation of new strings", type=int, nargs='?', const=1, default=0, metavar="N")
+    optgroup.add_argument(
+        "-fix", help="Revert replacement tags and apply translation_dictionary_out to translation",
+        action="store_true")
+    optgroup.add_argument(
+        "-cut", help="Add cut-mark character after N-letters or N-pixels in the given font, if N>128",
+        type=int, nargs='?', const=1, default=0, metavar="N")
+    optgroup.add_argument(
+        "-a", help="Apply translation to original files (default: 1: skip existing, 2:replace; " +
+        "apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)",
+        type=int, nargs='?', const=1, default=0, metavar="mode")
+    optgroup.add_argument(
+        "-cmp", help="Make translations from two language versions (root and to_compare folders)",
+        action="store_true")
 
     replgroup = parser.add_argument_group("replacement")
-    replgroup.add_argument("-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)", action="store_true")
-    replgroup.add_argument("-o", help="RegExp for old text", default='', metavar=("old_regexp"))
-    replgroup.add_argument("-n", help="New text RegExp replacer", default='', metavar=("new_replacer"))
-    replgroup.add_argument("-f", help="Replacers DSV database (ex: replacers.csv)", default='', metavar=("replacers_file"))
+    replgroup.add_argument(
+        "-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)",
+        action="store_true")
+    replgroup.add_argument(
+        "-o", help="RegExp for old translated text", default='', metavar=("old_regexp"))
+    replgroup.add_argument(
+        "-n", help="New translated text RegExp replacer", default='', metavar=("new_replacer"))
+    replgroup.add_argument(
+        "-ifs", help="RegExp for replacement check vs original", default='', metavar=("orig_allow_re"))
+    replgroup.add_argument(
+        "-exs", help="RegExp for exclusion check vs original", default='', metavar=("orig_block_re"))
+    replgroup.add_argument(
+        "-f", help="Replacers DSV database (ex: replacers.csv)", default='', metavar=("replacers_file"))
 
     intsgroup = parser.add_argument_group("additional").add_mutually_exclusive_group()
-    intsgroup.add_argument("-ca", help="Comment attributes with corresponding game file", action="store_true")
-    intsgroup.add_argument("-isc", help="Create intersection of strings in files (1:attributes, 2:+strings, default: 3:+infile-duplicates)", type=int, nargs='?', const=3, default=0, metavar="type")
-    intsgroup.add_argument("-isa", help="Apply intersection file to translations (1:attributes, default: 2:+strings)", type=int, nargs='?', const=2, default=0, metavar="type")
-    intsgroup.add_argument("-dct", help="Make dictionary file from all original words (default: 1:strings 2:+attributes)", type=int, nargs='?', const=2, default=0, metavar="type")
-    intsgroup.add_argument("-tdct", help="Translate dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
-    intsgroup.add_argument("-tdctu", help="Update translation of dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
+    intsgroup.add_argument(
+        "-ca", help="Comment attributes with corresponding game file", action="store_true")
+    intsgroup.add_argument(
+        "-isc", help="Create intersection of strings in files (1:attributes, 2:+strings, default: 3:+infile-duplicates)",
+        type=int, nargs='?', const=3, default=0, metavar="type")
+    intsgroup.add_argument(
+        "-isa", help="Apply intersection file to translations (1:attributes, default: 2:+strings)",
+        type=int, nargs='?', const=2, default=0, metavar="type")
+    intsgroup.add_argument(
+        "-dct", help="Make dictionary file from all original words (default: 1:strings 2:+attributes)",
+        type=int, nargs='?', const=2, default=0, metavar="type")
+    intsgroup.add_argument(
+        "-tdct", help="Translate dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
+    intsgroup.add_argument(
+        "-tdctu", help="Update translation of dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
 
     if USE_GIT:
         # GIT related stuff
         gitgroup = parser.add_argument_group("git")
-        gitgroup.add_argument("-url", default='', help="Git origin URL", metavar=("git_origin"))
+        gitgroup.add_argument(
+            "-url", default='', help="Git origin URL", metavar=("git_origin"))
         gitgroup = gitgroup.add_mutually_exclusive_group()
-        gitgroup.add_argument("-commit", help="Commit changes to the repository (default: 1:local, 2:origin)", type=int, nargs='?', const=1, default=0, metavar="type")
-        gitgroup.add_argument("-revert", help="Reverts ALL changes, if not commited, otherwise reverts to the previous commit", action="store_true")
-        gitgroup.add_argument("-exp", help="Export git repository as a zip file", action="store_true")
-        gitgroup.add_argument("-nogit", help="Disable Git usage", action="store_true")
-
+        gitgroup.add_argument(
+            "-commit", help="Commit changes to the repository (default: 1:local, 2:origin)",
+            type=int, nargs='?', const=1, default=0, metavar="type")
+        gitgroup.add_argument(
+            "-revert", help="Reverts ALL changes, if not committed, otherwise reverts to the previous commit",
+            action="store_true")
+        gitgroup.add_argument(
+            "-exp", help="Export git repository as a zip file", action="store_true")
+        gitgroup.add_argument(
+            "-nogit", help="Disable Git usage", action="store_true")
 
     exgroup = parser.add_argument_group("excel").add_mutually_exclusive_group()
-    exgroup.add_argument("-px", help="Prepare for Excel or OpenOffice (√ = tab, ∞ = newline)", action="store_true")
-    exgroup.add_argument("-rx", help="Revert Excel or OpenOffice compatibility for -a and -fix options", action="store_true")
+    exgroup.add_argument(
+        "-px", help="Prepare for Excel or OpenOffice (√ = tab, ∞ = newline)", action="store_true")
+    exgroup.add_argument(
+        "-rx", help="Revert Excel or OpenOffice compatibility for -a and -fix options", action="store_true")
 
     if len(sys.argv) < 2:
         print("FileTranslate " + VERSION_STR)
@@ -1919,7 +2031,8 @@ def main():
     if regexp_excl:
         print("Exclusion option enabled, expression:\n  ", regexp_excl.encode('unicode_escape').decode('mbcs'))
     if regexp_mque:
-        print("Merging option", ( "enabled, expression(s):\n  " + '\n  '.join(regexp_mque.encode('unicode_escape').decode('mbcs').split('||')) ) if do_merge else "disabled")
+        print("Merging option", ( "enabled, expression(s):\n  " +
+            '\n  '.join(regexp_mque.encode('unicode_escape').decode('mbcs').split('||')) ) if do_merge else "disabled")
 
     if len(patterns) == 0:
         patterns = list("*." + i for i in text_exts)
@@ -1952,6 +2065,8 @@ def main():
         if app_args.remnl:
             print(" (No newlines in source strings)")
 
+        tr_dict_in = read_csv_list(os.path.join(working_dir, TRANSLATION_IN_DB))
+
         # MTL bans you if you free-use it faster than N (>2000) chars per T (>20) sec
         # The following methods can be implemented within a custom translator's class
         if not hasattr(Translator, "wait"):
@@ -1966,6 +2081,7 @@ def main():
                     cache.clear()
                 return
             Translator.on_finish = on_finish
+
         if hasattr(Translator, "translate"):
             translate_old = Translator.translate
             not_translit_mode = False
@@ -1989,10 +2105,19 @@ def main():
                 # we need join -> split because there can be multiline items in lines_array
                 # in which case l_orig_lines != len(lines_array)
                 del lines_array
+
+                # apply pre-translations from dictionary [jpn] -> [jpn; eng]
+                for dict_line in tr_dict_in:
+                    if len(dict_line) < 1: continue
+                    replacer = '' if not dict_line[1] else dict_line[1]
+                    text_to_translate = re.sub(dict_line[0], replacer, text_to_translate, flags=re.U)#|re.I|re.M)
+
                 l_orig_lines = text_to_translate.splitlines()
                 l_orig = len(l_orig_lines)
 
-                translation_types = make_translation_types(l_orig_lines, lang_src, is_seq_strings, not_translit_mode, do_merge, merging_que_arr)
+                translation_types = make_translation_types(
+                    l_orig_lines, lang_src, is_seq_strings, not_translit_mode, do_merge, merging_que_arr
+                )
                 text_to_translate = make_text_to_translate(l_orig_lines, translation_types)
 
                 #print(PROGRESS_CHAR, end='', flush=True)
@@ -2021,8 +2146,10 @@ def main():
                             lines += f" -({translation_types[i]})-> "
                         except: pass
                         lines += line + '\n'
-                    with open(os.path.join(working_dir, 'error_translations.log'), 'w', encoding=CSV_ENCODING) as dtxt: dtxt.write(lines)
-                    raise Exception(f"\nERROR: Mismatch in translated line counts, original={l_orig} new={l_tran}, error_translations.txt written.")
+                    with open(os.path.join(working_dir, 'error_translations.log'), 'w', encoding=CSV_ENCODING) as dtxt:
+                        dtxt.write(lines)
+                    raise Exception(f"\nERROR: Mismatch in translated line counts, original={l_orig} " +
+                                    "new={l_tran}, error_translations.txt written.")
 
                 # if the translation result is shorter don't cache it, it's strange
                 if ENABLE_CACHE and (hash is not None) and text_is_long and (tr_txt_len > CACHE_MIN_TEXT_LENGTH):
@@ -2037,7 +2164,9 @@ def main():
 
     OCR = None
     if app_args.ocr:
-        OCR = OCRservice()
+        from paddleocr import PaddleOCR
+        LANG_DICT = { 'JA': 'japan', 'EN': 'en'}
+        OCR = PaddleOCR(use_angle_cls=True, lang=LANG_DICT[lang_src], debug=False, show_log=False)
 
     all_game_fn = []
     if app_args.ca and app_args.gd and os.path.exists(app_args.gd):
@@ -2077,6 +2206,10 @@ def main():
                        strip_cmts=True,
                        remove_newlines=app_args.remnl)
 
+    font_params = [DEFAULT_CUT_FONT[0], DEFAULT_CUT_FONT[1]]
+    if app_args.cut:
+        font_params = app_args.font.split(',')
+
     if app_args.isc:
         is_type = 'attributes'
         if app_args.isc == 2: is_type = 'attributes and strings'
@@ -2096,10 +2229,12 @@ def main():
         print("Applying cutoff marks %s at %s%d characters... " %
               (app_args.cm, ('~' if True else ''), app_args.cut))
         FT.applyCutMarks(app_args.cut,
-                         cut_chrs=string_unescape(app_args.cm),
-                         #mind_chr=' ',
-                         #use_bytelength=False
-                        )
+            cut_chrs=string_unescape(app_args.cm),
+            #mind_chr=' ',
+            #use_bytelength=False
+            font_name=font_params[0],
+            font_size=font_params[1]
+        )
         print('')
         return
     elif app_args.dct:
@@ -2206,10 +2341,12 @@ def main():
                 print("Upgrading strings " + base_name_print + ' :', end='', flush=True)
             else:
                 print("Making strings " + base_name_print + ' :', end='', flush=True)
-            res = FT.makeTranslatableStrings(currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '', name_duplicate=hasDuplicate)
+            res = FT.makeTranslatableStrings(
+                currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '', name_duplicate=hasDuplicate)
         elif app_args.rit:
             for csv_file in [(only_name + ATTRIBUTES_DB_POSTFIX), (only_name + STRINGS_DB_POSTFIX)]:
-                tmp = FT.replaceInTranslations(csv_file, old_re, new_str, app_args.f)
+                tmp = FT.replaceInTranslations(
+                    csv_file, old_re, new_str, repl_file=app_args.f, repl_cond=app_args.ifs, excl_cond=app_args.exs)
                 if tmp > 0:
                     print(f"Replaced {tmp} times in", csv_file)
                     res = True
