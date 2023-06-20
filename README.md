@@ -12,13 +12,14 @@ pip install .
 ## Usage
 
 ```Text
-filetranslate [-h] [-e encoding] [-p file_patterns] [-g game_engine] [-lang language_pair] [-gd game_files_path]
-        [-cm cut_mark] [-nomerge] [-remnl] [-images] [-font game_language]
-        [-ra attr_regexp] [-rs text_regexp] [-rt tag_regexp] [-rex exc_regexp] 
-        [-i | -u | -ocr | -t [N] | -tu [N] | -fix | -cut [N] | -a [mode] | -cmp] 
-        [-rit] [-o old_regexp] [-n new_replacer] [-ifs old_regexp] [-exs old_regexp] [-f replacers_file]
-        [-ca | -isc [type] | -isa [type] | -dct [type] | -tdct [N] | -tdctu [N]] 
-        [-url git_origin] [-commit [type] | -revert | -exp | -nogit]
+filetranslate [-h] [-e encoding] [-p file_patterns] [-g game_engine]
+        [-ra attr_regexp] [-rs text_regexp] [-rt tag_regexp] [-rex exc_regexp]
+        [-lang language_pair] [-gd game_files_path] [-cm cut_mark] [-nomerge] [-remnl]
+        [-images] [-acolor alpha_color] [-svg [svg_params]] [-dist box_dist] [-font cut_font_info] 
+        [-i | -u | -ocr [OPT] | -t | -tu | -fix | -cut [N] | -a [mode] | -cmp]
+        [-rit] [-o old_regexp] [-n new_replacer] [-ifs orig_allow_re] [-exs orig_block_re] [-f replacers_file] 
+        [-ca | -isc [type] | -isa [type] | -dct [type] | -tdct | -tdctu] 
+        [-url git_origin] [-commit [type] | -revert | -exp |-nogit]
         [-px | -rx]
 
 options:
@@ -27,13 +28,16 @@ options:
   -p file_patterns     File patterns (ex: *.txt,*.json)
   -g game_engine       Game engine preset (tyrano, kirikiri, kirikiri_tjs, rpgmakermv, rpgmakerace_scripts, rpgmakerace_yaml,
                        godot, godot_dialogic, resources)
-  -lang language_pair  Translation direction pair SRC-DEST (ex: JA-EN)
+  -lang language_pair  Translation direction pair SRC-DEST (ex/def: JA-EN)
   -gd game_files_path  Directory of the original game files
   -cm cut_mark         Cut-mark string or character
   -nomerge             Don't merge partial sequential strings during translation
   -remnl               Remove newlines from source strings
-  -images              Process image files
-  -font cut_font_info  Default font for pixel width measurement when -cut >128 (default: msgothic.ttc,24)
+  -images              Process all image files
+  -acolor alpha_color  OCR color replacer for alpha channel (ex/def: #000000)
+  -svg [svg_params]    Generate SVGs with positioned text for each OCR result
+  -dist box_dist       Maximal horizontal/vertical distances to merge OCR textboxes (ex: 10,10)
+  -font cut_font_info  Default font for pixel width measurement when -cut >128 (ex/def: msgothic.ttc,24)
 
 file regexps:
   -ra attr_regexp      RegExp for attributes
@@ -44,12 +48,12 @@ file regexps:
 stage:
   -i                   Initialize translation files
   -u                   Update translation files for new strings
-  -ocr                 Perform text recognition for images
+  -ocr [OPT]           Perform text recognition for images (1: default, 2: invert, 4: binarize; can be sum)
   -t                   Perform initial string translation
   -tu                  Perform translation of new strings
   -fix                 Revert replacement tags and apply translation_dictionary_out to translation
   -cut [N]             Add cut-mark character after N-letters or N-pixels in the given font, if N>128
-  -a [mode]            Apply translation to original files (default: 1: skip existing, 2:replace; apply dictionary_out to 4:
+  -a [mode]            Apply translation to original files (1: skip existing (def), 2:replace; apply dictionary_out to 4:
                        strings, 8: attributes; 16: all file content; can be sum)
   -cmp                 Make translations from two language versions (root and to_compare folders)
 
@@ -63,15 +67,15 @@ replacement:
 
 additional:
   -ca                  Comment attributes with corresponding game file (checks if an attribute matches a filename and comments if it is)
-  -isc [type]          Create intersection of strings in files (1:attributes, 2:+strings, default: 3:+infile-duplicates)
-  -isa [type]          Apply intersection file to translations (1:attributes, default: 2:+strings)
-  -dct [type]          Make dictionary file from all original words (default: 1:strings 2:+attributes)
+  -isc [type]          Create intersection of strings in files (1:attributes, 2:+strings, 3:+infile-duplicates (def))
+  -isa [type]          Apply intersection file to translations (1:attributes, 2:+strings (def))
+  -dct [type]          Make dictionary file from all original words (1:strings (def), 2:+attributes)
   -tdct                Translate dictionary file
   -tdctu               Update translation of dictionary file
 
 git:
   -url git_origin      Git origin URL
-  -commit [type]       Commit changes to the repository (default: 1:local, 2:origin)
+  -commit [type]       Commit changes to the repository (1:local (def), 2:origin)
   -revert              Reverts ALL changes, if not committed, otherwise reverts to the previous commit
   -exp                 Export git repository as a zip file
   -nogit               Disable Git usage

@@ -1,7 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 # The project requires Python 3.7 at the least
 
-import os, sys, glob
+import os, sys
 from typing import Tuple, List
 # add curent file's directory to path to include modules from the same folder
 sys.path.append(os.path.dirname(__file__))
@@ -290,18 +290,6 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
 
     return indexed_array
 
-def bbox_from_coords(coords):
-    xs = [i[0] for i in coords]
-    ys = [i[1] for i in coords]
-
-    left = int(min(xs))
-    right = int(max(xs))
-    top = int(min(ys))
-    bottom = int(max(ys))
-
-    width  = right - left
-    height = bottom - top
-    return left,top,width,height
 
 def write_svg(image, boxes, texts):
     """ Creates translation-ready SVG file from an image, bounding boxes and their text.
@@ -337,8 +325,9 @@ def write_svg(image, boxes, texts):
     svg_text += "</svg>"
     with open(os.path.splitext(image)[0] + ".svg", "w", encoding="utf-8") as f:
         f.write(svg_text)
+        return True
 
-    return True
+    return False
 
 # skip files with no translatable strings found and already translated files
 def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
@@ -518,34 +507,45 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     return True
 
 
-def process_image(ocr_svc, file_name):
+def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(0,0,0), make_svg=0, min_dist=(10,10)):
     """ Creates OCR texts database file from a game image.
     """
-
     onlyName = os.path.splitext(file_name)[0]
-    ocr_strings_fn = file_name  + STRINGS_DB_POSTFIX # needs extension since it duplicates name of the image
+    if make_svg or has_duplicates(onlyName):
+        # needs extension since it certainly duplicates name of the image
+        ocr_strings_fn = file_name  + STRINGS_DB_POSTFIX
+    else:
+        ocr_strings_fn = onlyName  + STRINGS_DB_POSTFIX
     if os.path.isfile(onlyName + ".svg") or os.path.isfile(ocr_strings_fn):
         return False
 
-    ocr_lines = ocr_svc.ocr(file_name)
-    if not len(ocr_lines): return False
-    if len(ocr_lines):
-        ocr_lines = ocr_lines[0]
-        if not len(ocr_lines) or not len(
-                [line[1][0] for line in ocr_lines if line[1][0] and line[1][0] != '-']):
-            return False
-        write_svg(file_name, [bbox_from_coords(line[0]) for line in ocr_lines], [line[1][0] for line in ocr_lines])
+    ocr_lines = ocr_svc.ocr(file_name, bin=binarize, inv=invert, alpha_color=alphacolor)
+    if not len(ocr_lines):
+        # maybe the transparent color mixes with the color of the text?
+        ocr_lines = ocr_svc.ocr(file_name, bin=binarize, inv=invert, alpha_color=tuple([(255 - i) for i in alphacolor]))
+    if not len(ocr_lines):
+        return False
 
-        print(f"{len(ocr_lines)} OCR strings.", end='')
-        try:
-            with open(ocr_strings_fn, 'w', newline='', encoding=CSV_ENCODING) as f:
-                writer = csv.writer(f, DIALECT_TRANSLATION)
-                for line in ocr_lines:
-                    writer.writerow([line[1][0], ''])
-        except:
-            print("ERROR: Cann't access file for writing:", ocr_strings_fn)
-            return False
-    else:
+    texts = []
+    ocr_lines = ocr_lines[0] # we always process by 1 document
+    if not len(ocr_lines) or not len(
+            [line[1][0] for line in ocr_lines if line[1][0] and line[1][0] != '-']):
+        return False
+    boxes = [bbox_from_coords(line[0]) for line in ocr_lines]
+    texts = [line[1][0] for line in ocr_lines]
+    boxes, texts = merge_boxes(boxes, texts, min_dist[0], min_dist[1])
+
+    if make_svg:
+        write_svg(file_name, boxes, texts)
+
+    print(f"{len(texts)} OCR strings.", end='')
+    try:
+        with open(ocr_strings_fn, 'w', newline='', encoding=CSV_ENCODING) as f:
+            writer = csv.writer(f, DIALECT_TRANSLATION)
+            for line in texts:
+                writer.writerow([line, ''])
+    except:
+        print("ERROR: Cann't access file for writing:", ocr_strings_fn)
         return False
     return True
 
@@ -1880,7 +1880,7 @@ def main():
     parser.add_argument(
         "-g", default=game_engine, help=f"Game engine preset ({project_types})", metavar=("game_engine"))
     parser.add_argument(
-        "-lang", default='JA-EN', help=f"Translation direction pair SRC-DEST (ex: JA-EN)", metavar=("language_pair"))
+        "-lang", default='JA-EN', help=f"Translation direction pair SRC-DEST (ex/def: JA-EN)", metavar=("language_pair"))
     #parser.add_argument(
     #   "-d", help="Directory of the source files (current by default)", default=working_dir, metavar=("default_path"))
     parser.add_argument(
@@ -1892,10 +1892,16 @@ def main():
     parser.add_argument(
         "-remnl", help="Remove newlines from source strings", action="store_true")
     parser.add_argument(
-        "-images", help="Process image files", action="store_true")
+        "-images", help="Process all image files", action="store_true")
+    parser.add_argument(
+        "-acolor", help="OCR color replacer for alpha channel (ex/def: #000000)", default="#000000", metavar=("alpha_color"))
+    parser.add_argument(
+        "-svg", help="Generate SVGs with positioned text for each OCR result", nargs='?', const=1, default=0, metavar=("svg_params"))
+    parser.add_argument(
+        "-dist", help="Maximal horizontal/vertical distances to merge OCR textboxes (ex: 10,10)", default="10,10", metavar=("box_dist"))
     parser.add_argument(
         "-font", default="msgothic.ttc,24",
-        help=f"Default font for pixel width measurement when -cut >128 (default: msgothic.ttc,24)",
+        help=f"Default font for pixel width measurement when -cut >128 (ex/def: msgothic.ttc,24)",
         metavar=("cut_font_info"))
 
     regroup = parser.add_argument_group("file regexps")
@@ -1907,7 +1913,7 @@ def main():
     optgroup = parser.add_argument_group("stage").add_mutually_exclusive_group()
     optgroup.add_argument("-i", help="Initialize translation files", action="store_true")
     optgroup.add_argument("-u", help="Update translation files for new strings", action="store_true")
-    optgroup.add_argument("-ocr", help="Perform text recognition for images", action="store_true")
+    optgroup.add_argument("-ocr", help="Perform text recognition for images (1: default, 2: invert, 4: binarize; can be sum)", type=int, nargs='?', const=1, default=0, metavar="OPT")
     optgroup.add_argument(
         "-t", help="Perform initial string translation", type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument(
@@ -1919,7 +1925,7 @@ def main():
         "-cut", help="Add cut-mark character after N-letters or N-pixels in the given font, if N>128",
         type=int, nargs='?', const=1, default=0, metavar="N")
     optgroup.add_argument(
-        "-a", help="Apply translation to original files (default: 1: skip existing, 2:replace; " +
+        "-a", help="Apply translation to original files (1: skip existing (def), 2:replace; " +
         "apply dictionary_out to 4: strings, 8: attributes; 16: all file content; can be sum)",
         type=int, nargs='?', const=1, default=0, metavar="mode")
     optgroup.add_argument(
@@ -1945,13 +1951,13 @@ def main():
     intsgroup.add_argument(
         "-ca", help="Comment attributes with corresponding game file", action="store_true")
     intsgroup.add_argument(
-        "-isc", help="Create intersection of strings in files (1:attributes, 2:+strings, default: 3:+infile-duplicates)",
+        "-isc", help="Create intersection of strings in files (1:attributes, 2:+strings, 3:+infile-duplicates (def))",
         type=int, nargs='?', const=3, default=0, metavar="type")
     intsgroup.add_argument(
-        "-isa", help="Apply intersection file to translations (1:attributes, default: 2:+strings)",
+        "-isa", help="Apply intersection file to translations (1:attributes, 2:+strings (def))",
         type=int, nargs='?', const=2, default=0, metavar="type")
     intsgroup.add_argument(
-        "-dct", help="Make dictionary file from all original words (default: 1:strings 2:+attributes)",
+        "-dct", help="Make dictionary file from all original words (1:strings (def), 2:+attributes)",
         type=int, nargs='?', const=2, default=0, metavar="type")
     intsgroup.add_argument(
         "-tdct", help="Translate dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
@@ -1965,7 +1971,7 @@ def main():
             "-url", default='', help="Git origin URL", metavar=("git_origin"))
         gitgroup = gitgroup.add_mutually_exclusive_group()
         gitgroup.add_argument(
-            "-commit", help="Commit changes to the repository (default: 1:local, 2:origin)",
+            "-commit", help="Commit changes to the repository (1:local (def), 2:origin)",
             type=int, nargs='?', const=1, default=0, metavar="type")
         gitgroup.add_argument(
             "-revert", help="Reverts ALL changes, if not committed, otherwise reverts to the previous commit",
@@ -2163,9 +2169,15 @@ def main():
         print("Starting time: {}".format(datetime.datetime.now().strftime("%H:%M %d.%m.%Y")))
 
     OCR = None
+    acolor = (255, 255, 255)
+    tdist = (10,10)
     if app_args.ocr:
-        from paddleocr import PaddleOCR
         LANG_DICT = { 'JA': 'japan', 'EN': 'en'}
+        acolor = MaxColor.hex_to_rgb(app_args.acolor)
+        tdist = tuple([int(i.strip()) for i in app_args.dist.split(',')])
+        print(f"\nInitializing \033[1mPaddleOCR\033[0m...\n Invert: {bool(app_args.ocr & 0b10)}; binarize: " +
+                f"{bool(app_args.ocr & 0b100)}; transparent: {acolor}; X/Y merge max: {tdist[0]}/{tdist[1]}")
+        from paddleocr import PaddleOCR
         OCR = PaddleOCR(use_angle_cls=True, lang=LANG_DICT[lang_src], debug=False, show_log=False)
 
     all_game_fn = []
@@ -2297,10 +2309,9 @@ def main():
         if (app_args.i or app_args.a) and (not FT.file_enc or FT.file_enc == ''):
                 FT.file_enc = detect_encoding(currentFile)
 
-        hasDuplicate = False
-        if len(glob.glob(only_name + '.*')) > 1:
+        hasDuplicate = has_duplicates(only_name)
+        if hasDuplicate:
             only_name = currentFile
-            hasDuplicate = True
 
         if app_args.a:
             print("Applying translation to " + base_name_print + ' ')
@@ -2321,8 +2332,8 @@ def main():
             #res = True if profile_func(translateCSV, MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
         elif app_args.ocr:
             print('')
-            print("Performing OCR " + base_name_print + ' ', end='', flush=True)
-            res = process_image(OCR, currentFile)
+            print("Performing OCR of " + base_name_print + ' : ', end='', flush=True)
+            res = process_image(OCR, currentFile, bool(app_args.ocr & 0b10), bool(app_args.ocr & 0b100), acolor, app_args.svg, tdist)
         elif app_args.px or app_args.rx:
             print("Fixing translation of " + base_name_print + ' ')
             res = prepare_csv_excel(only_name + ATTRIBUTES_DB_POSTFIX, app_args.rx)

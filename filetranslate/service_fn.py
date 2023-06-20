@@ -1,4 +1,4 @@
-import re, csv
+import re, csv, glob
 from sys import stdin
 from os import get_terminal_size, path
 import chardet
@@ -194,3 +194,71 @@ def print_progress(index, total, type_of_progress=0, start_from=0, end_with=100,
     if end_with == 100 and round(percent_done) >= end_with:
         sleep(.3)
         print((' '  * (TERMINAL_SIZE-2)),  end='\r', flush=True) # cleanup line
+
+
+def merge_boxes(boxes, texts, x_val, y_val):
+    size = len(boxes)
+    if size < 2:
+        return boxes, texts
+
+    if size == 2:
+        if boxes_mergeable(boxes[0], boxes[1], x_val, y_val):
+            boxes[0] = combine_boxes(boxes[0], boxes[1])
+            texts[0] = texts[0] + texts[1]
+            del boxes[1]
+        return boxes, texts
+
+    #boxes = sorted(boxes, key=lambda r: r[0])
+    i = size - 2
+    while i >= 0:
+        if boxes_mergeable(boxes[i], boxes[i + 1], x_val, y_val):
+            boxes[i] = combine_boxes(boxes[i], boxes[i + 1])
+            texts[i] = texts[i] + texts[i + 1]
+            del boxes[i + 1]
+            del texts[i + 1]
+        i -= 1
+    return boxes, texts
+
+
+def boxes_mergeable(box1, box2, x_val, y_val):
+    (x1, y1, w1, h1) = box1
+    (x2, y2, w2, h2) = box2
+    return max(x1, x2) - min(x1, x2) - minx_w(x1, w1, x2, w2) < x_val \
+        and max(y1, y2) - min(y1, y2) - miny_h(y1, h1, y2, h2) < y_val
+
+
+def minx_w(x1, w1, x2, w2):
+    return w1 if x1 <= x2 else w2
+
+
+def miny_h(y1, h1, y2, h2):
+    return h1 if y1 <= y2 else h2
+
+
+def combine_boxes(a, b):
+    x = min(a[0], b[0])
+    y = min(a[1], b[1])
+    w = max(a[0] + a[2], b[0] + b[2]) - x
+    h = max(a[1] + a[3], b[1] + b[3]) - y
+    return x, y, w, h
+
+
+def bbox_from_coords(coords):
+    xs = [i[0] for i in coords]
+    ys = [i[1] for i in coords]
+
+    left = int(min(xs))
+    right = int(max(xs))
+    top = int(min(ys))
+    bottom = int(max(ys))
+
+    width  = right - left
+    height = bottom - top
+    return left, top, width, height
+
+
+def has_duplicates(only_name):
+    hasDuplicate = False
+    if len(glob.glob(only_name + '.*')) > 1:
+        hasDuplicate = True
+    return hasDuplicate

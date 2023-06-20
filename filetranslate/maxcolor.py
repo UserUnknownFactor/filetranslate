@@ -35,8 +35,11 @@ class MaxColor(object):
             raise "Not an image-like parameter"
 
     @staticmethod
-    def hex_to_rgb(hex):
-        return tuple(bytes.fromhex(hex.replace("#", ''))[:3])
+    def hex_to_rgb(hexstr):
+        if len(hexstr) == 4 or len(hexstr) == 3:
+            hexstr = hexstr.replace("#", '')
+            return tuple(int(hexstr[i], 16) for i in range(3))
+        return tuple(bytes.fromhex(hexstr.replace("#", ''))[:3])
 
     @staticmethod
     def rgb_to_hex(r, g, b):
