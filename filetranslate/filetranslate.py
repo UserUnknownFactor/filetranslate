@@ -528,7 +528,7 @@ def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(
 
     texts = []
     ocr_lines = ocr_lines[0] # we always process by 1 document
-    if not len(ocr_lines) or not len(
+    if not ocr_lines or not len(ocr_lines) or not len(
             [line[1][0] for line in ocr_lines if line[1][0] and line[1][0] != '-']):
         return False
     boxes = [bbox_from_coords(line[0]) for line in ocr_lines]
@@ -1963,6 +1963,8 @@ def main():
         "-tdct", help="Translate dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
     intsgroup.add_argument(
         "-tdctu", help="Update translation of dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
+    intsgroup.add_argument(
+        "-csvm", help="Merge all csv's into a single file", action="store_true")
 
     if USE_GIT:
         # GIT related stuff
@@ -2115,7 +2117,7 @@ def main():
                 # apply pre-translations from dictionary [jpn] -> [jpn; eng]
                 for dict_line in tr_dict_in:
                     if len(dict_line) < 1: continue
-                    replacer = '' if not dict_line[1] else dict_line[1]
+                    replacer = '' if dict_line[1] is None else dict_line[1]
                     text_to_translate = re.sub(dict_line[0], replacer, text_to_translate, flags=re.U)#|re.I|re.M)
 
                 l_orig_lines = text_to_translate.splitlines()
@@ -2231,7 +2233,7 @@ def main():
         return
     elif app_args.isa:
         is_type = 'attributes'
-        if app_args.isc == 2: is_type = 'attributes and strings'
+        if app_args.isa == 2: is_type = 'attributes and strings'
         print(f"Applying intersections to {is_type}: ", end='', flush=True)
         if FT.applyIntersectionAttributes(app_args.isa):
             FT.updateRepo("intersection")
@@ -2293,6 +2295,8 @@ def main():
 
     fileCount = 0
     fileAllCount = 0
+    array_csv_attrs = []
+    array_csv_strs = []
     for currentFile in matchingFileList:
         if not(os.path.isfile(currentFile) and os.access(currentFile, os.W_OK)):
             print("WARNING: File does not exist or not accessible: " + currentFile)
@@ -2316,6 +2320,19 @@ def main():
         if app_args.a:
             print("Applying translation to " + base_name_print + ' ')
             res = FT.applyTranslationsToFile(currentFile, mode=app_args.a, name_duplicate=hasDuplicate)
+        elif app_args.csvm:
+            print("Merging translations of " + base_name_print + ' ')
+            attr_name = only_name + ATTRIBUTES_DB_POSTFIX
+            a = False
+            if os.path.isfile(attr_name):
+                a = read_csv_list(attr_name)
+                array_csv_attrs += a
+                res = a and len(a) > 0
+            str_name = only_name + STRINGS_DB_POSTFIX
+            if os.path.isfile(str_name):
+                a = read_csv_list(str_name)
+                array_csv_strs += a
+                res |= a and len(a) > 0
         elif app_args.cmp:
             currentToCompare = currentFile.replace(base_name, f"\\to_compare{base_name}")
             if os.path.exists(currentFile) and os.path.exists(currentToCompare):
@@ -2367,6 +2384,11 @@ def main():
             break
         if res:
             fileCount += 1
+    # end for currentFile in matchingFileList
+
+    if app_args.csvm and fileCount > 0:
+        write_csv_list("attributes_combinbed.csv", array_csv_attrs)
+        write_csv_list("strings_combinbed.csv", array_csv_strs)
 
     if MT is not None: MT.on_finish()
     print("\nTotal files passed             : " + str(fileCount))
