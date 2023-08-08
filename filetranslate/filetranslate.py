@@ -14,6 +14,7 @@ from PIL import Image, ImageFont
 from maxcolor import MaxColor
 from language_fn import *
 from service_fn import *
+from math import isnan
 
 #from multiprocessing import Process
 
@@ -1203,7 +1204,7 @@ def _getOutputName(self, file_name):
         outputName = file_name.replace(self.work_dir, os.path.join(self.work_dir, DEFAULT_OUT_DIR))
     return outputName
 
-def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
+def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
     outputName = self.getOutputName(file_name)
     if not os.path.exists(file_name) or (os.path.exists(outputName) and not (self.use_game_dir or (mode & 2))):
         #print("skipped, already applied and not replacement mode or original missing", end='', flush=True)
@@ -1211,14 +1212,29 @@ def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
 
     splitName = os.path.splitext(file_name)
     onlyName = splitName[0]
+    if has_duplicates(onlyName):
+        onlyName = file_name
     translationsFile = onlyName + STRINGS_DB_POSTFIX
 
-    if not os.path.exists(translationsFile): return False
+    if not os.path.exists(translationsFile):
+        return False
 
     out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
     translation = read_csv_list(translationsFile)
 
-    zero_char = '\0'.encode(self.file_enc)
+    out_enc = self.file_enc.split(',')
+    if len(out_enc) == 1:
+        origin_enc = out_enc = out_enc[0]
+    elif len(out_enc) > 1:
+        origin_enc = out_enc[0]
+        out_enc = out_enc[1]
+    else:
+        origin_enc = out_enc = "utf-8"
+
+    if out_enc == "utf-16":
+        out_enc == "utf-16-le"
+
+    zero_char = '\0'.encode(out_enc)
     zero_char_len = len(zero_char)
 
     with open(file_name, 'rb') as f:
@@ -1240,33 +1256,38 @@ def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
             if self.escape_dquo_a:
                 tmp_str = tmp_str.replace('"', '\\"')
 
-            _offset_mode = len(line) >= 3 and line[2]
-            _enc = self.file_enc
-            _filler = "\0"
+            _offset_mode = len(line) > 3 and line[3] is not None and line[3].strip() != ''
+            _filler = '\0'
 
             if _offset_mode:
-                _a = [l.strip() for l in line[2].split(',') if l.strip()]
+                # line[3] since [2] is reserved for context
+                _a = [l.strip() for l in line[3].split(',') if l.strip()]
                 #example of the third csv column (offset, encoding, filler) is:
-                #  0x0011aa[, utf-16le][, \x20]
+                #  [0x0011aa][,utf-16le][, \x20]
                 if len(_a) > 0:
-                    offset = int(_a[0], 16)
+                    if _a[0]:
+                        offset = int(_a[0], 16)
+                        if isnan(offset):
+                            _offset_mode = False
+                    else:
+                        _offset_mode = False
                     if len(_a) > 1:
-                        _enc = _a[1]
+                        out_enc = _a[1]
                     if len(_a) > 2:
                         _filler = string_unescape(_a[2])
                 else:
                     _offset_mode = False
 
-            _orig_str = origin_str.encode(_enc)
+            _orig_str = origin_str.encode(origin_enc)
             _orig_len = len(_orig_str)
-            tmp_str = make_same_size(tmp_str, _orig_len, _enc, _filler)
+            tmp_str = make_same_size(tmp_str, _orig_len, out_enc, _filler)
             #new_translation.append([line[0], tmp_str.strip('\0')]) # actually applied translations
             if _offset_mode and bstr[offset:offset+_orig_len] == _orig_str:
-                    bstr = bstr[:offset] + tmp_str.encode(_enc) + bstr[offset+_orig_len:]
+                    bstr = bstr[:offset] + tmp_str.encode(out_enc) + bstr[offset+_orig_len:]
             else:
                 # this is more reliable as it doesn't depend on the file's version
                 # but strings need to be long enough to be unique
-                bstr = bstr.replace(_orig_str + zero_char, tmp_str.encode(_enc) + zero_char, 1)
+                bstr = bstr.replace(_orig_str + zero_char, tmp_str.encode(out_enc) + zero_char, 1)
 
         if _hash != md5(bstr).hexdigest():
             pathOut = os.path.dirname(outputName)
@@ -1278,7 +1299,7 @@ def _applyTranslationsToExe(self, file_name, mode=1) -> bool:
             return True
     return False
 
-def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False) -> bool:
+def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_binary=False) -> bool:
     """ Applies translations from translation databases to game files and images
         and places results in translation_out directory.
     """
@@ -1287,8 +1308,8 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False) -> b
     onlyName = splitName[0]
     onlyExt = splitName[1].lower()
 
-    if onlyExt == ".exe" or onlyExt == ".dll":
-        return self.applyTranslationsToExe(file_name, mode)
+    if is_binary:
+        return self.applyTranslationsToBinary(file_name, mode)
 
     # check if multilple files with only different ext exist
     if name_duplicate:
@@ -1657,7 +1678,7 @@ class FileTranslate:
     applyFixesToTranslation = _applyFixesToTranslation
     getOutputName = _getOutputName
     applyTranslationsToFile = _applyTranslationsToFile
-    applyTranslationsToExe = _applyTranslationsToExe
+    applyTranslationsToBinary = _applyTranslationsToBinary
     applyIntersectionAttributes = _applyIntersectionAttributes
     applyCutMarks = _applyCutMarks
     intersectAttributes = _intersectAttributes
@@ -1901,8 +1922,9 @@ def main():
         "-dist", help="Maximal horizontal/vertical distances to merge OCR textboxes (ex: 10,10)", default="10,10", metavar=("box_dist"))
     parser.add_argument(
         "-font", default="msgothic.ttc,24",
-        help=f"Default font for pixel width measurement when -cut >128 (ex/def: msgothic.ttc,24)",
+        help=f"Default font for pixel width measurement when -cut >128 (ex/def: {DEFAULT_CUT_FONT[0]+','+str(DEFAULT_CUT_FONT[1])})",
         metavar=("cut_font_info"))
+    parser.add_argument("-bin", default=".exe,.dll",  help="Binary file extensions (ex/def: .exe,.dll)", metavar=("bin_exts"))
 
     regroup = parser.add_argument_group("file regexps")
     regroup.add_argument("-ra", help="RegExp for attributes", default='', metavar=("attr_regexp"))
@@ -2319,7 +2341,8 @@ def main():
 
         if app_args.a:
             print("Applying translation to " + base_name_print + ' ')
-            res = FT.applyTranslationsToFile(currentFile, mode=app_args.a, name_duplicate=hasDuplicate)
+            is_bin = any(currentFile.endswith(ext) for ext in app_args.bin.split(','))
+            res = FT.applyTranslationsToFile(currentFile, mode=app_args.a, name_duplicate=hasDuplicate, is_binary=is_bin)
         elif app_args.csvm:
             print("Merging translations of " + base_name_print + ' ')
             attr_name = only_name + ATTRIBUTES_DB_POSTFIX

@@ -168,7 +168,7 @@ The program is currently sensitive to line separator type so there should be onl
 
 ## Translating exe/dll files
 
-0. Extract translatable strings into a DSV file; its format is: `original→translation[→hex offset[,encoding[,escaped filler char like \x20]]]`
+0. Extract translatable strings into a DSV file; its format is: `original→translation[→context→[hex offset][,encoding[,escaped filler char like \x20]]]`
 1. Create additional line in `game_regexps.csv` (example: `game_1→utf-16le→*.exe→→→`)
 2. Optionally create `game_1.project` to automate game engine selection if only .exe is translated.
 3. Run `filetranslate -g game_1 -a` or `filetranslate -a` if you created the project file
