@@ -16,6 +16,11 @@ from language_fn import *
 from service_fn import *
 from math import isnan
 
+if os.name == 'nt': # Enable ANSI console escape codes without colorama
+    from ctypes import windll
+    k = windll.kernel32
+    k.SetConsoleMode(k.GetStdHandle(-11), 7)
+
 #from multiprocessing import Process
 
 ENABLE_PROFILER = False
@@ -335,6 +340,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     """ Translates or upgrades translations in database file with game texts.
     """
     j = 0
+    translated_lines = 0
     if os.path.isfile(file_name):
         no_translations = False
         untl_lines = []
@@ -372,8 +378,9 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                                 row[4]) == 0) if upgrade else len(reader_ind)
             except IndexError as e:
                 del cache[file_name]
-                raise Exception(f"Error on lines: {[row for row in reader_ind if len(row) < 5]} of"+
-                                " {os.path.basename(file_name)}")
+                l = [row for row in reader_ind if len(row) < 5]
+                f = os.path.basename(file_name)
+                raise Exception(f"Error on lines: {l} of {f}")
             progress_divisor = max(1, num_lines // 1000)
             print_progress(1, 100, type_of_progress=4)
             to_transl = []
@@ -499,13 +506,15 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             for row in reader_ind:
                 i = row[0]
                 out = reader_ind[i][4]
+                if out:
+                    translated_lines += 1
                 #if is_in_language(out, "JA"):
                     #out = ''
                 writer.writerow([reader_ind[i][2], out] + reader_ind[i][5:])
 
         print_progress(100, 100)
 
-    return True
+    return translated_lines
 
 
 def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(0,0,0), make_svg=0, min_dist=(10,10)):
@@ -524,6 +533,9 @@ def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(
     if not len(ocr_lines):
         # maybe the transparent color mixes with the color of the text?
         ocr_lines = ocr_svc.ocr(file_name, bin=binarize, inv=invert, alpha_color=tuple([(255 - i) for i in alphacolor]))
+        #if not len(ocr_lines):
+            # maybe the image text is white on black and OCR is bad with it?
+            #ocr_lines = ocr_svc.ocr(file_name, bin=binarize, inv=not invert, alpha_color=alphacolor)
     if not len(ocr_lines):
         return False
 
@@ -2057,12 +2069,13 @@ def main():
         sys.exit(1)
 
     do_merge = not app_args.nomerge
+    is_translation = app_args.t or app_args.tu
 
-    if regexp_excl:
-        print("Exclusion option enabled, expression:\n  ", regexp_excl.encode('unicode_escape').decode('mbcs'))
-    if regexp_mque:
+    if regexp_excl and is_translation:
+        print("Exclusion option enabled, expression:\n  ", regexp_excl)
+    if regexp_mque and is_translation:
         print("Merging option", ( "enabled, expression(s):\n  " +
-            '\n  '.join(regexp_mque.encode('unicode_escape').decode('mbcs').split('||')) ) if do_merge else "disabled")
+            '\n  '.join(regexp_mque.split('||')) ) if do_merge else "disabled")
 
     if len(patterns) == 0:
         patterns = list("*." + i for i in text_exts)
@@ -2082,7 +2095,7 @@ def main():
 
 
     MT = None
-    if app_args.t or app_args.tu or app_args.tdct or app_args.tdctu:
+    if is_translation or app_args.tdct or app_args.tdctu:
         # MTL bans you if you free-use it faster than N (>5000) chars per T (>10) sec
         # The following methods to be implemented within a custom translator's class
 
@@ -2112,6 +2125,7 @@ def main():
                 return
             Translator.on_finish = on_finish
 
+        Translator._first_time_translate = True
         if hasattr(Translator, "translate"):
             translate_old = Translator.translate
             not_translit_mode = False
@@ -2151,14 +2165,20 @@ def main():
                 text_to_translate = make_text_to_translate(l_orig_lines, translation_types)
 
                 #print(PROGRESS_CHAR, end='', flush=True)
+                if not self._first_time_translate:
+                    self.wait()
+                else:
+                    self._first_time_translate = False
+
                 while True:
                     try:
                         transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
                         break
+                    except KeyboardInterrupt as k:
+                        del MT
                     except Exception as e:
                         print(str(e), end='\r')
                         sleep(TRANSLATION_BAN_DELAY)
-                self.wait()
 
                 tr_txt_len = len(transl_text)
                 transl_text = transl_text.splitlines()
@@ -2361,15 +2381,16 @@ def main():
             if os.path.exists(currentFile) and os.path.exists(currentToCompare):
                 print("Comparing with \\to_compare\\ " + base_name_print + ' ...\n', end='', flush=True)
                 res = FT.makeComparison(currentFile, currentToCompare, name_duplicate=hasDuplicate)
-        elif app_args.t or app_args.tu:
-            if app_args.t:
-                print("Translating " + base_name_print + ' ...\n', end='', flush=True)
-            else:
-                print("Updating translation of " + base_name_print + ' ...\n', end='', flush=True)
+        elif is_translation:
+            text = ''
+            if app_args.t: text = f"Translating {base_name_print} ...\n"
+            else: text = f"Updating translation of {base_name_print} ...\n"
+            print(text, end='', flush=True)
             res = FT.translateCSV(MT, only_name + ATTRIBUTES_DB_POSTFIX, False, app_args.tu)
-            #print(';', end='', flush=True)
-            res = True if FT.translateCSV(MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
-            #res = True if profile_func(translateCSV, MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu) else res
+            res += FT.translateCSV(MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu)
+            if res: # line up due to using progress bar on the line after
+                print("\033[F" + text.rstrip('\n') + ' ' + str(res) +' lines\n', end='', flush=True)
+            res = res > 0
         elif app_args.ocr:
             print('')
             print("Performing OCR of " + base_name_print + ' : ', end='', flush=True)
