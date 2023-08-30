@@ -44,7 +44,7 @@ DEFAULT_CUT_FONT = ("msgothic.ttc", 24)
 
 ENABLE_CACHE = False
 cache = None
-CACHE_EXPIRY_TIME = 3*24*60*60
+CACHE_EXPIRY_TIME = None #3*24*60*60
 TRANSLATION_BAN_DELAY = 60 * 60
 CACHE_MIN_TEXT_LENGTH = 2
 
@@ -100,8 +100,7 @@ PUNCTUATION_JPN_START = '«‘“｛〈《「' #［『【
 PUNCTUATION_JPN_START_RE='[' + PUNCTUATION_OTHER + PUNCTUATION_JPN_START + ']*'
 PUNCTUATION_JPN_END = '｝〉》」’”ー' #］』】
 PUNCTUATION_JPN_END_RE='[' + PUNCTUATION_OTHER + PUNCTUATION_JPN_END + ']*'
-PUNCTUATION_RE = re.compile(r'([\.!?])')
-PUNCTUATION_EN = ".,!?;:"
+
 
 TEXT_RE_SPLITTER = '|<===>|'
 UNICODE_ESCAPE_RE = r'\\u[A-Fa-f\d]{4}'
@@ -111,27 +110,6 @@ ATTRIBUTES_NAME = "attributes"
 STRINGS_DB_POSTFIX = "_" + STRINGS_NAME + ".csv"
 ATTRIBUTES_DB_POSTFIX = "_" + ATTRIBUTES_NAME + ".csv"
 LOOKBEHIND_LINES = 10
-
-def tag_hash(string, str_enc="utf-8", hash_len=7):
-    """ Generates short English tags for MTL from any kind of string.
-    """
-    if len(string) < 1: return ''
-    d = hashlib.sha1(string.encode(str_enc)).digest()
-    s = ''
-    n_chars = 26 + 10
-    for i in range(0, hash_len):
-        x = d[i] % n_chars
-        #s += chr(ord('a') + x) # lowercase letters, n_chars = 26
-        s += (chr(ord('0') + x - 26) if x >= 26 else chr(ord('a') + x)) # numbers + lowercase, n_chars = 36
-        #s += (chr(ord('A') + x - 26) if x >= 26 else chr(ord('a') + x)) # letters, n_chars = 52
-
-    endchar = ','
-    # indentation and endline checks
-    if re.search(r"\A(?:\/\/)?(?:\t+|\A[\u0020\u3000]{2,})", string):
-        endchar = ':'
-    elif re.search(r"\.\s*$", string):
-        endchar = '!'
-    return s + endchar
 
 def get_primary_color(pa, x1, x2, y1, y2):
     pixels = []
@@ -342,7 +320,6 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     j = 0
     translated_lines = 0
     if os.path.isfile(file_name):
-        no_translations = False
         untl_lines = []
         with open(file_name, 'r', newline='', encoding=CSV_ENCODING) as f:
             allines = csv.reader(f, DIALECT_TRANSLATION)
@@ -364,7 +341,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             print_progress(0, 100)
             if ENABLE_CACHE:
                 cache = Cache("__pycache__")
-                reader_ind = cache.get(file_name)
+                if not upgrade:
+                    reader_ind = cache.get(file_name)
             if reader_ind is None:
                 #print(TAB_REPLACER, end='', flush=True)
                 reader_ind = split_reader_to_array(
@@ -418,18 +396,21 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 is_over_limit = last_size + repl_line_len + len(to_transl) * 1 >= max_chars
 
                 is_mergeable = []
-                allow_merge = (True if type_str else bool('\n' in repl_line)) and not upgrade
+                allow_merge = (True if type_str else bool('\n' in repl_line)) #and not upgrade
                 mergeable_lines = len(reader_ind[i][3])
-                if self.re_mergeque: #and type_str: # TODO: don't merge attributes?
+                if self.re_mergeque: #and type_str: # TODO: what about attributes?
                     is_mergeable = [None] * mergeable_lines
                     #print(self.re_mergeque)
                     for i_ln in range(mergeable_lines):
                         item = reader_ind[i][3][i_ln]
                         # check starttags and text start
                         if merge_nostarter_re:
-                            def check_intro(idx, in_idx):
-                                # not last item of reader_ind or reader_ind's pre-translations split
-                                if idx + 1 > len(reader_ind) or in_idx + 1 > len(reader_ind[idx][3]): return False
+                            def check_blocking_intro(idx, in_idx):
+                                # not last item of reader_ind or reader_ind's item pre-processed split
+                                if idx >= len(reader_ind): return True
+                                if in_idx >= len(reader_ind[idx][3]): return False
+                                if upgrade and (idx + 1 < len(reader_ind) and reader_ind[idx + 1][4]): return True
+
                                 check_item = reader_ind[idx][3][in_idx]
                                 # check if nostarter is in starttags or in item's translatable text (0 and 1 array items)
                                 is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (
@@ -438,7 +419,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                                 return (is_in_tag or is_in_text)
 
                             # check if nostarter is in next pre-translation split or in next line of csv
-                            if check_intro(i, i_ln+1) or check_intro(i+1, 0):
+                            if check_blocking_intro(i, i_ln+1) or check_blocking_intro(i+1, 0):
                                 is_mergeable[i_ln] = False
                                 continue
 
@@ -486,6 +467,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                     last_size += repl_line_len
 
                 changed_lines += 1
+                translated_lines = changed_lines
                 if changed_lines % progress_divisor == 0:
                     print_progress(
                         changed_lines,
@@ -506,8 +488,6 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             for row in reader_ind:
                 i = row[0]
                 out = reader_ind[i][4]
-                if out:
-                    translated_lines += 1
                 #if is_in_language(out, "JA"):
                     #out = ''
                 writer.writerow([reader_ind[i][2], out] + reader_ind[i][5:])
@@ -1138,7 +1118,7 @@ def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None, repl_
     return cnt
 
 
-def _applyFixesToTranslation(self, transl_fn, is_string=True):
+def _applyFixesToTranslation(self, transl_fn, is_string=True, source_lang='JA'):
     """ Applies translation fixes from replacement_tags and translation_dictionary_out
         to translation databases.
     """
@@ -1148,9 +1128,6 @@ def _applyFixesToTranslation(self, transl_fn, is_string=True):
     else:
         transl_fn += ATTRIBUTES_DB_POSTFIX
 
-    string_tags_dict = read_csv_list(os.path.join(self.work_dir, REPLACEMENT_TAG_DB))
-    tr_dict_out = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB)) if is_string else []
-
     old_list = read_csv_list(transl_fn)
     len_old_list = len(old_list)
     progress_divisor = max(1, len_old_list // 100)
@@ -1159,20 +1136,15 @@ def _applyFixesToTranslation(self, transl_fn, is_string=True):
     is_fixed = False
 
     print_progress(0, 100)
+
+    string_tags_list = read_csv_list(os.path.join(self.work_dir, REPLACEMENT_TAG_DB))
+    tr_dict_out = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB)) if is_string else []
+
     for i, row in enumerate(old_list):
         fixed = ''
         if len(row)>1 and row[1] is not None:
             fixed = row[1]
-            for dict_line in string_tags_dict:
-                fixed = fixed.replace(dict_line[1], dict_line[0])
-                fixed = fixed.replace((dict_line[1][0].upper() + dict_line[1][1:]), dict_line[0])
-                fixed = fixed.replace(dict_line[1].upper(), dict_line[0])
-                fixed = fixed.replace(dict_line[1].lower(), dict_line[0])
-                if len(dict_line[0]) > 2 and (dict_line[1][-1:] in PUNCTUATION_EN):
-                    #sometimes MTLs gulp-down punctuation
-                    fixed = fixed.replace(dict_line[1][:-1], dict_line[0])
-                    fixed = fixed.replace(dict_line[1].upper()[:-1], dict_line[0])
-                    fixed = fixed.replace(dict_line[1].lower()[:-1], dict_line[0])
+            fixed = unreplace_tags(fixed, string_tags_list, lang=source_lang)
 
             # Apply fixes from translation_dictionary_out [eng] -> [eng fixed]
             #    We do it here, not right after translation, to  backup unfixed copy and
@@ -1927,7 +1899,7 @@ def main():
     parser.add_argument(
         "-images", help="Process all image files", action="store_true")
     parser.add_argument(
-        "-acolor", help="OCR color replacer for alpha channel (ex/def: #000000)", default="#000000", metavar=("alpha_color"))
+        "-acolor", help="OCR color replacer for alpha channel (ex/def: #FFFFFF)", default="#FFFFFF", metavar=("alpha_color"))
     parser.add_argument(
         "-svg", help="Generate SVGs with positioned text for each OCR result", nargs='?', const=1, default=0, metavar=("svg_params"))
     parser.add_argument(
@@ -2249,7 +2221,6 @@ def main():
         elif app_args.ocr:
             patterns = image_patterns
 
-
     FT = FileTranslate(work_dir=working_dir,
                        img_exts=img_exts,
                        file_enc=file_encoding,
@@ -2349,11 +2320,12 @@ def main():
         base_name_print = f"{base_name} ({fileAllCount} of {totalCount})"
         currentFile = os.path.abspath(currentFile)
         only_name = os.path.splitext(currentFile)[0]
-        if (os.path.basename(__file__) in currentFile) or ("replacers.csv" in currentFile) or ("requirements" in currentFile):
+        if any((s in currentFile) for s in [os.path.basename(__file__), TRANSLATION_IN_DB, TRANSLATION_OUT_DB, INTERSECTIONS_FILE, GAME_REGEXP_DB, "replacers.csv", "requirements"]):
             continue
 
+
         if (app_args.i or app_args.a) and (not FT.file_enc or FT.file_enc == ''):
-                FT.file_enc = detect_encoding(currentFile)
+            FT.file_enc = detect_encoding(currentFile)
 
         hasDuplicate = has_duplicates(only_name)
         if hasDuplicate:
@@ -2401,8 +2373,8 @@ def main():
             res = True if prepare_csv_excel(only_name + STRINGS_DB_POSTFIX, app_args.rx) else res
         elif app_args.fix:
             print("Fixing translation of " + base_name_print + ' ')
-            res = FT.applyFixesToTranslation(only_name, False)
-            res = True if FT.applyFixesToTranslation(only_name) else res
+            res = FT.applyFixesToTranslation(only_name, False, source_lang=lang_src)
+            res = True if FT.applyFixesToTranslation(only_name, source_lang=lang_src) else res
         elif app_args.ca and app_args.gd:
             print("Validating attributes of " + base_name_print, end='', flush=True)
             res = strip_attr_matching_file(only_name + ATTRIBUTES_DB_POSTFIX, all_game_fn)
@@ -2463,5 +2435,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
 

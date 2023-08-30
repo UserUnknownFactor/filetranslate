@@ -39,6 +39,7 @@ csv.register_dialect(DIALECT_TRANSLATION, delimiter=DELIMITER_CHAR, quotechar="\
 
 LAST_NEWLINE_RE = re.compile(r"([^\n])[\n]$")
 
+
 def chomp(x):
     """ Removes last linebreak after a character """
     LAST_NEWLINE_RE.sub(r'\1', x)
