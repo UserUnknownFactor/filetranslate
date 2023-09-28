@@ -624,7 +624,7 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
     return False
 
 
-def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_duplicate=False):
+def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_duplicate=False, ignore_mismatch=False):
     """ Compares two of the same files in different languages to produce translations.
         (files should contain the exact same number of string data)
     """
@@ -633,17 +633,17 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
         # find attributes
         if self.re_a:
             attributes = []
-            test = self.re_a.findall(content)
+            #test = self.re_a.findall(content)
             for match in self.re_a.finditer(content):
                 # check if any of the groups matched
                 match_groups = iter(a for a in match.groups() if a is not None)
                 att_str = next(match_groups, None)
                 while att_str is not None:
-                    if not (self.re_excl and self.re_excl.search(att_str)):
-                        attributes.append(att_str)
-                    else:
-                        if not (self.re_excl and self.re_excl.search(att_str)):
+                    if self.re_excl:
+                        if not self.re_excl.search(att_str):
                             attributes.append(att_str)
+                    else:
+                        attributes.append(att_str)
                     att_str = next(match_groups, None)
         return attributes
 
@@ -663,12 +663,15 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
                     pass
 
                 if len(text_str) > 0:
-                    if not (self.re_excl and self.re_excl.search(text_str)):
+                    if self.re_excl:
+                        if not self.re_excl.search(text_str):
+                            strings.append(text_str)
+                    else:
                         strings.append(text_str)
 
-                        if self.has_context:
-                            ctx = match.group("context")
-                            contexts.append(ctx if ctx else '')
+                    if self.has_context:
+                        ctx = match.group("context")
+                        contexts.append(ctx if ctx else '')
         return (strings, contexts)
 
     j = 0
@@ -700,7 +703,7 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
         stringsT, contextsT = find_strings(contentT)
 
     if len(attributesB) == 0 and len(stringsB) == 0: return False
-    if len(attributesB) != len(attributesT):
+    if not ignore_mismatch and len(attributesB) != len(attributesT):
         print("Error: attributes count mismatch")
         ret = False
     else:
@@ -709,7 +712,7 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
         attributes = [x for x in attributes if x[0] and x[0] not in used and (used.add(x[0]) or True)]
         write_csv_list(f"{onlyName}_comparison{ATTRIBUTES_DB_POSTFIX}" , attributes)
 
-    if len(stringsB) != len(stringsT):
+    if not ignore_mismatch and len(stringsB) != len(stringsT):
         print("Error: strings count mismatch")
         ret = False
     else:
