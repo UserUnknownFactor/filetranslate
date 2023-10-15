@@ -317,185 +317,199 @@ def write_svg(image, boxes, texts):
 def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     """ Translates or upgrades translations in database file with game texts.
     """
+    if not os.path.isfile(file_name):
+        return 0
+
     j = 0
     translated_lines = 0
-    if os.path.isfile(file_name):
-        untl_lines = []
-        with open(file_name, 'r', newline='', encoding=CSV_ENCODING) as f:
-            allines = csv.reader(f, DIALECT_TRANSLATION)
-            untl_lines = [bool(
-                    len(line) < 2 or not line[1] or len(line[1]) == 0
-                ) for line in allines]
-        if not all(untl_lines) and not upgrade:
-            return False
-        if not any(untl_lines) and upgrade:
-            return False
+    num_tled_lines = 0
+    num_tled_lines_new = 0
+    untl_lines = []
 
-        max_chars = trn_svc.get_char_limit()
-        string_tags = read_csv_list(os.path.join(self.work_dir, REPLACEMENT_TAG_DB))
-        upgraded_lines = []
-        is_translated = False
+    with open(file_name, 'r', newline='', encoding=CSV_ENCODING) as f:
+        allines = csv.reader(f, DIALECT_TRANSLATION)
+        untl_lines = [bool(
+                len(line) < 2 or not line[1] or len(line[1]) == 0
+            ) for line in allines]
+    if not all(untl_lines) and not upgrade:
+        return 0
+    if not any(untl_lines) and upgrade:
+        return 0
 
-        with open(file_name, mode="r", encoding=CSV_ENCODING) as f:
-            reader_ind = None
-            print_progress(0, 100)
+    max_chars = trn_svc.get_char_limit()
+    string_tags = read_csv_list(os.path.join(self.work_dir, REPLACEMENT_TAG_DB))
+    upgraded_lines = []
+
+    with open(file_name, mode="r", encoding=CSV_ENCODING) as f:
+        reader_ind = None
+        print_progress(0, 100)
+        if ENABLE_CACHE:
+            cache = Cache("__pycache__")
+            if not upgrade:
+                reader_ind = cache.get(file_name)
+        if reader_ind is None:
+            reader_ind = split_reader_to_array(
+                list(csv.reader(f, DIALECT_TRANSLATION)), string_tags, self.remove_newlines)
             if ENABLE_CACHE:
-                cache = Cache("__pycache__")
-                if not upgrade:
-                    reader_ind = cache.get(file_name)
-            if reader_ind is None:
-                #print(TAB_REPLACER, end='', flush=True)
-                reader_ind = split_reader_to_array(
-                    list(csv.reader(f, DIALECT_TRANSLATION)), string_tags, self.remove_newlines)
-                if ENABLE_CACHE:
-                    cache.set(file_name, reader_ind, expire=CACHE_EXPIRY_TIME)
+                cache.set(file_name, reader_ind, expire=CACHE_EXPIRY_TIME)
 
-            num_lines = 0
-            try:
-                num_lines = sum(1 for row in reader_ind if len(row)>4 and row[4] is None or len(
-                                row[4]) == 0) if upgrade else len(reader_ind)
-            except IndexError as e:
-                del cache[file_name]
-                l = [row for row in reader_ind if len(row) < 5]
-                f = os.path.basename(file_name)
-                raise Exception(f"Error on lines: {l} of {f}")
-            progress_divisor = max(1, num_lines // 1000)
-            print_progress(1, 100, type_of_progress=4)
-            to_transl = []
-            merging_que_arr = []
-            translated = []
-            last_size = 0
-            changed_lines = 0
-            ttype = 0
-            merge_ender_re = merge_nostarter_re = merge_noendtag_re = None
-            if self.re_mergeque:
-                r = self.re_mergeque.split('||')
-                # generic specification if the line allowed to be merged; for example [^;…。？！）\.\]]*$
-                merge_ender_re = re.compile(r'%s' % r[0]) if len(r)>0 else None
-                # stuff that's blocking for merging in start tags of the current/next line; for example (?:^[（「\\])
-                merge_nostarter_re = re.compile(r'%s' % r[1]) if len(r)>1 else None
-                # stuff that's blocking for merging in end tags of the current/previous line; for example (?:[」）]$)
-                merge_noendtag_re = re.compile(r'%s' % r[2]) if len(r)>2 else None
-            for row in reader_ind:
-                if len(row[2]) == 0:
-                    raise Exception("ERROR: no source text for item", changed_lines)
-                if upgrade and row[4] is not None and len(row[4]) > 0: continue #have translation
+        num_lines = len(reader_ind)
+        try:
+            if upgrade:
+                num_lines = sum(1 for row in reader_ind if (
+                    len(row) > 4 and row[4] is None or len(row[4]) == 0)
+                )
+        except IndexError as e:
+            del cache[file_name]
+            l = [row for row in reader_ind if len(row) < 5]
+            f = os.path.basename(file_name)
+            raise Exception(f"Error on lines: {l} of {f}")
 
-                i = row[0]
-                repl_line = string_from_indexed_array_item(reader_ind[i])
-                if reader_ind[i][2][:2] == COMMENT_TAG:
-                    repl_line = repl_line[2:]
-                    #continue
-                if upgrade: upgraded_lines.append(i)
+        num_tled_lines = len(reader_ind) - num_lines
+        progress_divisor = max(1, num_lines // 1000)
+        to_transl = []
+        merging_que_arr = []
+        translated = []
+        last_size = 0
+        changed_lines = 0
+        ttype = 0
+        merge_ender_re = merge_nostarter_re = merge_noendtag_re = None
 
-                # NOTE: Additional replacements should be done in a translation service class
-                # or with translation_in. Batch translation in parts below max_chars:
-                repl_line_len = len(repl_line)
-                is_last = (changed_lines >= (num_lines - 1))
-                # is_over_limit => new size + last size + linebreaks
-                is_over_limit = last_size + repl_line_len + len(to_transl) * 1 >= max_chars
+        print_progress(1, 100, type_of_progress=4)
+        if self.re_mergeque:
+            r = self.re_mergeque.split('||')
+            # generic specification if the line allowed to be merged; for example [^;…。？！）\.\]]*$
+            merge_ender_re = re.compile(r'%s' % r[0]) if len(r)>0 else None
+            # stuff that's blocking for merging in start tags of the current/next line; for example (?:^[（「\\])
+            merge_nostarter_re = re.compile(r'%s' % r[1]) if len(r)>1 else None
+            # stuff that's blocking for merging in end tags of the current/previous line; for example (?:[」）]$)
+            merge_noendtag_re = re.compile(r'%s' % r[2]) if len(r)>2 else None
+        for row in reader_ind:
+            if len(row[2]) == 0:
+                continue #or
+                raise Exception("ERROR: no source text for item", changed_lines)
+            if upgrade and row[4] is not None and len(row[4]) > 0: continue #have translation
 
-                is_mergeable = []
-                allow_merge = (True if type_str else bool('\n' in repl_line)) #and not upgrade
-                mergeable_lines = len(reader_ind[i][3])
-                if self.re_mergeque: #and type_str: # TODO: what about attributes?
-                    is_mergeable = [None] * mergeable_lines
-                    #print(self.re_mergeque)
-                    for i_ln in range(mergeable_lines):
-                        item = reader_ind[i][3][i_ln]
-                        # check starttags and text start
-                        if merge_nostarter_re:
-                            def check_blocking_intro(idx, in_idx):
-                                # not last item of reader_ind or reader_ind's item pre-processed split
-                                if idx >= len(reader_ind): return True
-                                if in_idx >= len(reader_ind[idx][3]): return False
-                                if upgrade and (idx + 1 < len(reader_ind) and reader_ind[idx + 1][4]): return True
+            i = row[0]
+            repl_line = string_from_indexed_array_item(reader_ind[i])
+            if reader_ind[i][2][:2] == COMMENT_TAG:
+                repl_line = repl_line[2:]
+                #continue
+            if upgrade: upgraded_lines.append(i)
 
-                                check_item = reader_ind[idx][3][in_idx]
-                                # check if nostarter is in starttags or in item's translatable text (0 and 1 array items)
-                                is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (
-                                    merge_nostarter_re.search(check_item[0])))
-                                is_in_text = bool(check_item[1] and merge_nostarter_re.search(check_item[1]))
-                                return (is_in_tag or is_in_text)
+            # NOTE: Additional replacements should be done in a translation service class
+            # or with translation_in. Batch translation in parts below max_chars:
+            repl_line_len = len(repl_line)
+            is_last = (changed_lines >= (num_lines - 1))
+            # is_over_limit => new size + last size + linebreaks
+            is_over_limit = last_size + repl_line_len + len(to_transl) * 1 >= max_chars
 
-                            # check if nostarter is in next pre-translation split or in next line of csv
-                            if check_blocking_intro(i, i_ln+1) or check_blocking_intro(i+1, 0):
-                                is_mergeable[i_ln] = False
-                                continue
+            is_mergeable = []
+            allow_merge = (True if type_str else bool('\n' in repl_line)) #and not upgrade
+            mergeable_lines = len(reader_ind[i][3])
+            if self.re_mergeque: #and type_str: # TODO: what about attributes?
+                is_mergeable = [None] * mergeable_lines
+                #print(self.re_mergeque)
+                for i_ln in range(mergeable_lines):
+                    item = reader_ind[i][3][i_ln]
+                    # check starttags and text start
+                    if merge_nostarter_re:
+                        def check_blocking_intro(idx, in_idx):
+                            # not last item of reader_ind or reader_ind's item pre-processed split
+                            if idx >= len(reader_ind): return True
+                            if in_idx >= len(reader_ind[idx][3]): return False
+                            if upgrade and (idx + 1 < len(reader_ind) and reader_ind[idx + 1][4]): return True
 
-                        # check endtag(s) for allowed enders too
-                        if (merge_noendtag_re):
-                            if item[2] is not None and len(item[2]) >= 1 and bool(merge_noendtag_re.search(item[2])):
-                                is_mergeable[i_ln] = False
-                                if not type_str: # found blocking endtag in attribute: stop merging everything after
-                                    allow_merge = False
-                                continue
+                            check_item = reader_ind[idx][3][in_idx]
+                            # check if nostarter is in starttags or in item's translatable text (0 and 1 array items)
+                            is_in_tag = bool(check_item[0] is not None and len(check_item[0]) >= 1 and (
+                                merge_nostarter_re.search(check_item[0])))
+                            is_in_text = bool(check_item[1] and merge_nostarter_re.search(check_item[1]))
+                            return (is_in_tag or is_in_text)
 
-                        # check text for allowed ender, if it's long enough and allowed to merge
-                        is_mergeable[i_ln] = bool(
-                                item[1] and merge_ender_re.search(item[1])
-                            ) and len(item[1]) > 4 and allow_merge
-                        if mergeable_lines > 1 and i_ln < len(reader_ind[i][3]) - 1 and not reader_ind[i][3][i_ln+1][1]:
-                            is_mergeable[i_ln] = False # empty next line marks end of the sentence
-                        if not type_str:
-                            if i_ln >= mergeable_lines - 1:
-                                is_mergeable[i_ln] = False # last line of a multiline attribute block
+                        # check if nostarter is in next pre-translation split or in next line of csv
+                        if check_blocking_intro(i, i_ln+1) or check_blocking_intro(i+1, 0):
+                            is_mergeable[i_ln] = False
+                            continue
 
-                if is_over_limit or is_last:
-                    if is_last:
-                        if is_over_limit:
-                            ttype, _text = trn_svc.translate(to_transl, type_str and not upgrade, merging_que_arr)
-                            translated += _text
-                            to_transl = [repl_line]
-                            if self.re_mergeque:
-                                merging_que_arr = is_mergeable
-                        else:
-                            to_transl.append(repl_line)
-                            if self.re_mergeque:
-                                merging_que_arr += is_mergeable
-                            last_size += repl_line_len
-                    ttype, _text =  trn_svc.translate(to_transl, type_str and not upgrade, merging_que_arr)
-                    translated += _text
-                    to_transl = [repl_line]
-                    if self.re_mergeque:
-                        merging_que_arr = is_mergeable
-                    last_size = repl_line_len
-                else:
-                    to_transl.append(repl_line)
-                    if self.re_mergeque:
-                        merging_que_arr += is_mergeable
-                    last_size += repl_line_len
+                    # check endtag(s) for allowed enders too
+                    if (merge_noendtag_re):
+                        if item[2] is not None and len(item[2]) >= 1 and bool(merge_noendtag_re.search(item[2])):
+                            is_mergeable[i_ln] = False
+                            if not type_str: # found blocking endtag in attribute: stop merging everything after
+                                allow_merge = False
+                            continue
 
-                changed_lines += 1
-                translated_lines = changed_lines
-                if changed_lines % progress_divisor == 0:
-                    print_progress(
-                        changed_lines,
-                        num_lines,
-                        type_of_progress=((1 if type_str else 2) if ttype > 0 else 3),
-                        start_from=2,
-                        end_with=98
-                    )
+                    # check text for allowed ender, if it's long enough and allowed to merge
+                    is_mergeable[i_ln] = bool(
+                            item[1] and merge_ender_re.search(item[1])
+                        ) and len(item[1]) > 4 and allow_merge
+                    if mergeable_lines > 1 and i_ln < len(reader_ind[i][3]) - 1 and not reader_ind[i][3][i_ln+1][1]:
+                        is_mergeable[i_ln] = False # empty next line marks end of the sentence
+                    if not type_str:
+                        if i_ln >= mergeable_lines - 1:
+                            is_mergeable[i_ln] = False # last line of a multiline attribute block
 
-        # NOTE: translation should be checked for proper line count in the MT class or its override
-        if not len(translated):
-            print_progress(100, 100)
-            return False
-        reader_ind = revert_text_to_indexed_array(translated, reader_ind, original_indexes=upgraded_lines)
+            if is_over_limit or is_last:
+                if is_last:
+                    if is_over_limit:
+                        ttype, _text = trn_svc.translate(to_transl, type_str and not upgrade, merging_que_arr)
+                        translated += _text
+                        to_transl = [repl_line]
+                        if self.re_mergeque:
+                            merging_que_arr = is_mergeable
+                    else:
+                        to_transl.append(repl_line)
+                        if self.re_mergeque:
+                            merging_que_arr += is_mergeable
+                        last_size += repl_line_len
+                ttype, _text =  trn_svc.translate(to_transl, type_str and not upgrade, merging_que_arr)
+                translated += _text
+                to_transl = [repl_line]
+                if self.re_mergeque:
+                    merging_que_arr = is_mergeable
+                last_size = repl_line_len
+            else:
+                to_transl.append(repl_line)
+                if self.re_mergeque:
+                    merging_que_arr += is_mergeable
+                last_size += repl_line_len
 
-        with open(file_name, 'w', newline='', encoding=CSV_ENCODING) as f:
-            writer = csv.writer(f, DIALECT_TRANSLATION)
-            for row in reader_ind:
-                i = row[0]
-                out = reader_ind[i][4]
-                #if is_in_language(out, "JA"):
-                    #out = ''
-                writer.writerow([reader_ind[i][2], out] + reader_ind[i][5:])
+            changed_lines += 1
+            translated_lines = changed_lines
+            if changed_lines % progress_divisor == 0:
+                print_progress(
+                    changed_lines,
+                    num_lines,
+                    type_of_progress=((1 if type_str else 2) if ttype > 0 else 3),
+                    start_from=2,
+                    end_with=98
+                )
 
+    # NOTE: translation should be checked for proper line count in the MT class or its override
+    if not len(translated):
         print_progress(100, 100)
+        return 0
 
-    return translated_lines
+    reader_ind = revert_text_to_indexed_array(translated, reader_ind, original_indexes=upgraded_lines)
+    num_tled_lines_new = len(reader_ind)
+    try:
+        num_tled_lines_new = sum(1 for row in reader_ind if (
+            len(row) > 4 and row[4] is not None and len(row[4]) > 0)
+        )
+    except:
+        pass
 
+    with open(file_name, 'w', newline='', encoding=CSV_ENCODING) as f:
+        writer = csv.writer(f, DIALECT_TRANSLATION)
+        for row in reader_ind:
+            i = row[0]
+            out = reader_ind[i][4]
+            writer.writerow([reader_ind[i][2], out] + reader_ind[i][5:])
+
+    print_progress(100, 100)
+
+    return num_tled_lines_new - num_tled_lines if num_tled_lines_new > num_tled_lines else num_tled_lines_new
 
 def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(0,0,0), make_svg=0, min_dist=(10,10)):
     """ Creates OCR texts database file from a game image.
@@ -594,12 +608,6 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
         with open(new_name, 'w', newline='', encoding=CSV_ENCODING) as f:
             writer = csv.writer(f, DIALECT_TRANSLATION)
             have_contexts = (len(contexts) == len(str_list))
-
-            """counts = dict()
-            if upgrade and old_list:
-                for old_line in old_list:
-                    counts[old_line[0]] = counts.get(old_line[0], 0) + 1
-            """
 
             for i, line in enumerate(str_list):
                 trn = ''
@@ -868,7 +876,10 @@ def _get_str_len(text, is_px_width=False, fontname=DEFAULT_CUT_FONT[0], fontsize
     """Returns string length either in pixels or in characters."""
     global MEASURED_FONT
     if not MEASURED_FONT and is_px_width:
-        MEASURED_FONT = ImageFont.truetype(os.path.join(os.environ["WINDIR"], "fonts", fontname), fontsize)
+        # NOTE: it accepts full path or just name
+        if ':' not in fontname and os.environ["WINDIR"]:
+            fontname = os.path.join(os.environ["WINDIR"], "fonts", fontname)
+        MEASURED_FONT = ImageFont.truetype(fontname, fontsize)
     if is_px_width:
         return MEASURED_FONT.getlength(text)
     return len(text)
@@ -885,7 +896,7 @@ def _applyCutMarks(self, interval:int=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE
         (Character-based interval is usually low for reader's convenience, not 100+ so whatever).
     """
     if not interval: return
-    if interval > 128 and not is_px_width:
+    if interval > 128:
         is_px_width = True
     csv_files = list(find_files(self.work_dir, ['*' + STRINGS_DB_POSTFIX]))
     if include_attr:
@@ -925,14 +936,24 @@ def _applyCutMarks(self, interval:int=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE
                         j += 1
                 else:
                     tmp_str_len = _get_str_len(tmp_str, is_px_width, font_name, font_size)
-                    mnd_chr_len = _get_str_len(mind_chr, is_px_width, font_name, font_size)
+                    mnd_chr_len = len(mind_chr)
+                    def find_pos(measure_str, max_pos, _by_pixels=False):
+                            if _by_pixels:
+                                pos = len(measure_str)
+                                while pos and _get_str_len(measure_str, True, font_name, font_size) > max_pos:
+                                    measure_str = measure_str[:-1]
+                                    pos = len(measure_str)
+                            else:
+                                pos = max_pos
+                            return pos
+                    _interval = find_pos(tmp_str, interval, is_px_width)
                     while tmp_str_len > interval:
-                        where = interval
+                        where = find_pos(tmp_str, interval, is_px_width)
                         if (mind_chr is not None):
-                            where_rspace = tmp_str[:interval].rfind(mind_chr)
-                            if where_rspace < 2 or tmp_str[interval-1] in PUNCTUATION_EN:
-                                where_rspace = interval
-                            where = min(interval, where_rspace)
+                            where_rspace = tmp_str[:_interval].rfind(mind_chr)
+                            if where_rspace < 2 or tmp_str[_interval - 1] in PUNCTUATION_EN:
+                                where_rspace = _interval
+                            where = min(_interval, where_rspace)
                             tmp = tmp_str[:where]
                             if tmp[:mnd_chr_len] == mind_chr:
                                 tmp = tmp[mnd_chr_len:]
@@ -1853,6 +1874,7 @@ def main():
         with open(regexp_db, 'r', newline='', encoding=CSV_ENCODING) as f:
             reader = csv.reader(f, DIALECT_TRANSLATION)
             for line in reader:
+                if not line: break
                 project_types.append(line[0])
     project_types = ", ".join(project_types)
 
@@ -2111,10 +2133,10 @@ def main():
 
                 transl_text = ''
                 text_is_long = len(text_to_translate) > CACHE_MIN_TEXT_LENGTH
-                hash = None
+                text_block_hash = None
                 if ENABLE_CACHE and text_is_long:
-                    hash = md5(text_to_translate.encode("utf-16le")).hexdigest()
-                    transl_text = cache.get(hash)
+                    text_block_hash = md5(text_to_translate.encode("utf-8")).hexdigest()
+                    transl_text = cache.get(text_block_hash)
                     if transl_text is not None:
                         #print(PROGRESS_OTHER_CHAR, end='', flush=True)
                         return (0, transl_text)
@@ -2149,13 +2171,13 @@ def main():
                     try:
                         transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
                         break
-                    except KeyboardInterrupt as k:
+                    except KeyboardInterrupt:
                         del MT
                     except Exception as e:
                         print(str(e), end='\r')
                         sleep(TRANSLATION_BAN_DELAY)
 
-                tr_txt_len = len(transl_text)
+                tr_txt_len = len(re.sub(r'[\r\n \t.,;!?\u3000]', '', transl_text))
                 transl_text = transl_text.splitlines()
 
                 # restore empty lines
@@ -2177,9 +2199,9 @@ def main():
                                     "new={l_tran}, error_translations.txt written.")
 
                 # if the translation result is shorter don't cache it, it's strange
-                if ENABLE_CACHE and (hash is not None) and text_is_long and (tr_txt_len > CACHE_MIN_TEXT_LENGTH):
+                if ENABLE_CACHE and (text_block_hash is not None) and text_is_long and (tr_txt_len > CACHE_MIN_TEXT_LENGTH):
                     tagstr = 'gtrans'
-                    cache.set(hash, transl_text_full, expire=CACHE_EXPIRY_TIME, tag=tagstr)
+                    cache.set(text_block_hash, transl_text_full, expire=CACHE_EXPIRY_TIME, tag=tagstr)
 
                 return (1, transl_text_full)
             Translator.translate = translate_new
@@ -2239,6 +2261,8 @@ def main():
     font_params = [DEFAULT_CUT_FONT[0], DEFAULT_CUT_FONT[1]]
     if app_args.cut:
         font_params = app_args.font.split(',')
+        if len (font_params) > 1:
+            font_params[1] = int(font_params[1])
 
     if app_args.isc:
         is_type = 'attributes'
@@ -2256,8 +2280,8 @@ def main():
         print('')
         return
     elif app_args.cut:
-        print("Applying cutoff marks %s at %s%d characters... " %
-              (app_args.cm, ('~' if True else ''), app_args.cut))
+        print("Applying cutoff marks (%s) at %s%d %s... " %
+              (app_args.cm, ('~' if True else ''), app_args.cut, "pixels" if int(app_args.cut) > 128 else "characters"))
         FT.applyCutMarks(app_args.cut,
             cut_chrs=string_unescape(app_args.cm),
             #mind_chr=' ',
@@ -2315,7 +2339,7 @@ def main():
     array_csv_strs = []
     for currentFile in matchingFileList:
         if not(os.path.isfile(currentFile) and os.access(currentFile, os.W_OK)):
-            print("WARNING: File does not exist or not accessible: " + currentFile)
+            print("WARNING: File doesn't exist or not accessible: " + currentFile)
             continue
         fileAllCount += 1
         res = False
@@ -2395,7 +2419,7 @@ def main():
                 tmp = FT.replaceInTranslations(
                     csv_file, old_re, new_str, repl_file=app_args.f, repl_cond=app_args.ifs, excl_cond=app_args.exs)
                 if tmp > 0:
-                    print(f"Replaced {tmp} times in", csv_file)
+                    print(f"Replaced {tmp} times in", csv_file.replace(working_dir, ''))
                     res = True
         else:
             print("Unexpected parameter combination, aborting...")
