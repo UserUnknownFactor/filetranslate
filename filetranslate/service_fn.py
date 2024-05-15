@@ -80,7 +80,7 @@ def read_csv_list(fn, ftype=DIALECT_TRANSLATION, replace_cr=USE_CR_REPLACER):
     """ Reads CSV array in a->b->... format """
     if path.isfile(fn):
         with open(fn, 'r', newline='', encoding=CSV_ENCODING) as f:
-            return list(x for x in csv.reader(preprocess_in(f, replace_cr), ftype) if len(x) > 0)
+            return list(x for x in csv.reader(preprocess_in(f, replace_cr), dialect=ftype) if len(x) > 0)
     else:
         return list()
 
@@ -89,7 +89,7 @@ def write_csv_list(fn, lst, ftype=DIALECT_TRANSLATION, replace_cr=USE_CR_REPLACE
     """ Writes CSV array in a->b->... format """
     if not lst or len(lst) == 0: return
     with open(fn, 'w', newline='', encoding=CSV_ENCODING) as f:
-        writer = csv.writer(f, ftype)
+        writer = csv.writer(f, dialect=ftype)
         for row in preprocess_out(lst, replace_cr):
             writer.writerow(row)
 
@@ -99,7 +99,7 @@ def read_csv_dict(fn, ftype=DIALECT_TRANSLATION, replace_cr=USE_CR_REPLACER):
     if path.isfile(fn):
         with open(fn, 'r', newline='', encoding=CSV_ENCODING) as f:
             # the function will ignore columns after second
-            return {item[0]: item[1] for item in csv.reader(preprocess_in(f, replace_cr), ftype) if len(item) > 1}
+            return {item[0]: item[1] for item in csv.reader(preprocess_in(f, replace_cr), dialect=ftype) if len(item) > 1}
     else:
         return dict()
 

@@ -91,7 +91,7 @@ DICTIOANRY_FILE = "dictionary.csv"
 DEFAULT_OUT_DIR = "translation_out"
 PROJECT_EXT = ".project"
 GIT_INCLUDE_FILES = ["*.csv", "*.project", "*.svg"]
-EXLUDED_DIRS = set([".git",".vscode",".backup", "__pycache__", "to_compare", "[Originals]", DEFAULT_OUT_DIR])
+EXLUDED_DIRS = set([".git", ".vscode", ".backup", "__pycache__", "to_compare", "[Originals]", DEFAULT_OUT_DIR])
 
 # processing RegExps
 PUNCTUATION_OTHER = ' "\t\u0020\u3000/\\'
@@ -283,8 +283,8 @@ def write_svg(image, boxes, texts):
     pixels = img.load() # this is not a list, nor it is list'able
 
     _, image_file = os.path.split(image)
-    svg_text = """<svg xmlns="http://www.w3.org/2000/svg"
-                xmlns:xlink="http://www.w3.org/1999/xlink"
+    svg_text = """<svg xmlns="https://www.w3.org/2000/svg"
+                xmlns:xlink="https://www.w3.org/1999/xlink"
                 space="preserve"
                 width="{width}"
                 height="{heigth}"
@@ -313,7 +313,7 @@ def write_svg(image, boxes, texts):
 
     return False
 
-# skip files with no translatable strings found and already translated files
+# skips files with no translatable strings found and already translated files
 def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     """ Translates or upgrades translations in database file with game texts.
     """
@@ -730,8 +730,8 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
     return ret
 
 
-def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_duplicate=False):
-    """ Creates or upgrades translation database from a game scenario file.
+def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_duplicate=False) -> int:
+    """ Creates or upgrades translation database from a game file
     """
     j = 0
     # don't duplicate attribute strings
@@ -763,7 +763,14 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_dup
     contexts = []
 
     with open(file_name, mode="r", encoding=self.file_enc) as f:
-        content = f.read()
+        try:
+            content = f.read()
+        except UnicodeDecodeError:
+            print(f"Encoding of {file_name} doesn't match the game database")
+            return 0
+
+        if not content:
+            return 0
 
         # find attributes
         if self.re_a:
@@ -845,9 +852,9 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_dup
     return (j > 0)
 
 
-def prepare_csv_excel(file_name, restore=True):
-    """ Converts translations to/from Excel-compatible spreadsheets by replacing
-        tabulation and newline-inside-row characters.
+def prepare_csv_excel(file_name, restore=True) -> bool:
+    """ Converts translations to/from Excel-compatible spreadsheets
+        by replacing tabulation and newline-inside-row characters.
     """
     if not os.path.exists(file_name): return False
     torigin = TAB_REPLACER if restore else '\t'
@@ -855,7 +862,7 @@ def prepare_csv_excel(file_name, restore=True):
     norigin = NEWLINE_REPLACER if restore else '\n'
     nreplacer = '\n'  if restore else NEWLINE_REPLACER
     old_list = read_csv_list(file_name, ftype=(DIALECT_EXCEL if restore else DIALECT_TRANSLATION))
-    if not len(old_list): return
+    if not len(old_list): return False
 
     for i, row in enumerate(old_list):
         if row[0]:
@@ -876,8 +883,7 @@ def _get_str_len(text, is_px_width=False, fontname=DEFAULT_CUT_FONT[0], fontsize
     """Returns string length either in pixels or in characters."""
     global MEASURED_FONT
     if not MEASURED_FONT and is_px_width:
-        # NOTE: it accepts full path or just name
-        if ':' not in fontname and os.environ["WINDIR"]:
+        if ':' not in fontname:
             fontname = os.path.join(os.environ["WINDIR"], "fonts", fontname)
         MEASURED_FONT = ImageFont.truetype(fontname, fontsize)
     if is_px_width:
@@ -888,12 +894,17 @@ def _applyCutMarks(self, interval:int=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE
                    skip_processed=False, include_attr=False, is_px_width=False, font_size=DEFAULT_CUT_FONT[1],
                    font_name=DEFAULT_CUT_FONT[0]):
     """ Cuts a string into interval-sized parts using `cut_chrs`.
+
         If `interval == 1`, original string's (byte-)length is used.
-        The `cut_ch`r can be the engine's line separator or a unicode marker for manual processing.
+
+        The `cut_chrs` can be the engine's line separator or a unicode marker for manual processing.
+
         Can process strings based on their byte length in the provided encoding.
-        If the interval is >128 it's considered to be in pixels regardless of is_px_width,
+
+        If the interval is >`128` it's considered to be in pixels regardless of `is_px_width`,
         which allows checking text by its pixel length in the given font.
-        (Character-based interval is usually low for reader's convenience, not 100+ so whatever).
+
+        (Character-based interval is usually low for reader's convenience, not 100+ so whatever.)
     """
     if not interval: return
     if interval > 128:
@@ -1212,6 +1223,11 @@ def _getOutputName(self, file_name):
         outputName = file_name.replace(self.work_dir, os.path.join(self.work_dir, DEFAULT_OUT_DIR))
     return outputName
 
+def sort_by_first_column_length(arr):
+    """Sort the list in descending order based on the length of the first column"""
+    sorted_arr = sorted(arr, key=lambda x: len(x[0]), reverse=True)
+    return sorted_arr
+
 def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
     outputName = self.getOutputName(file_name)
     if not os.path.exists(file_name) or (os.path.exists(outputName) and not (self.use_game_dir or (mode & 2))):
@@ -1228,7 +1244,7 @@ def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
         return False
 
     out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
-    translation = read_csv_list(translationsFile)
+    translation = sort_by_first_column_length(read_csv_list(translationsFile))
 
     out_enc = self.file_enc.split(',')
     if len(out_enc) == 1:
@@ -1290,7 +1306,10 @@ def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
             _orig_len = len(_orig_str)
             tmp_str = make_same_size(tmp_str, _orig_len, out_enc, _filler)
             #new_translation.append([line[0], tmp_str.strip('\0')]) # actually applied translations
-            if _offset_mode and bstr[offset:offset+_orig_len] == _orig_str:
+            if _offset_mode:
+                # can't fallback to generic replacer in offset mode since the string may be too short
+                #print(f"{hex(offset)}: {bstr[offset:offset+_orig_len]} == {_orig_str}")
+                if bstr[offset:offset+_orig_len] == _orig_str:
                     bstr = bstr[:offset] + tmp_str.encode(out_enc) + bstr[offset+_orig_len:]
             else:
                 # this is more reliable as it doesn't depend on the file's version
@@ -1307,7 +1326,7 @@ def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
             return True
     return False
 
-def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_binary=False) -> bool:
+def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_binary=False, drop_empty=False) -> bool:
     """ Applies translations from translation databases to game files and images
         and places results in translation_out directory.
     """
@@ -1380,7 +1399,6 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
 
             last_pos = 0
             for row in reader:
-                if self.strip_comments and row[0][:len(COMMENT_TAG)] == COMMENT_TAG: continue
                 forig_t_lines += 1
                 try:
                     tmp_str = row[1]
@@ -1395,6 +1413,8 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
                     print("Error on previous string line #", forig_t_lines-1, "text: \n", row[1])
                     err_flag = False
 
+                if self.strip_comments and row[0][:len(COMMENT_TAG)] == COMMENT_TAG and tmp_str[:len(COMMENT_TAG)] != COMMENT_TAG: continue
+
                 if (mode & 4):
                     for dict_line in out_dict:
                         if len(dict_line[0]) == 0: continue
@@ -1405,14 +1425,14 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
                     tmp_str = tmp_str.replace('"', '\\"')
 
                 # don't check all text
-                for i  in range(last_pos, len(split_torg_text)):
+                for i in range(last_pos, len(split_torg_text)):
                     orig_ln = split_torg_text[i]
                     if orig_ln == '"' or orig_ln == "'": continue
                     if orig_ln == row[0]:
                         if not tmp_str and mode & 16: break
                         split_torg_text[i] = tmp_str
                         new_pos =  i-LOOKBEHIND_LINES * re_s.groups
-                        last_pos = max(0,new_pos)
+                        last_pos = max(0, new_pos)
                         break
                 #last_line_continues = (len(re.findall(re_endline, row[1][-3:])) > 0)
                 if not apply_txt:
@@ -1452,7 +1472,7 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
                     repl = re.compile(dict_line[0])
                     row[1] = repl.sub(dict_line[1], row[1])
 
-        alines.sort(key=lambda l: len(l[0]), reverse=True)
+        alines = sort_by_first_column_length(alines)
 
         # quotes can be escaped manually with -rit command line parameter
         # TODO: cmdline opt to make first attribute letter uppercase and rest - lowercase
@@ -1484,7 +1504,11 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
                     item = found
 
                     for row in alines:
-                        if item == row[0]: item = row[1]
+                        if self.strip_comments and row[0][:len(COMMENT_TAG)] == COMMENT_TAG and row[1][:len(COMMENT_TAG)] != COMMENT_TAG: continue
+                        if item == row[0]:
+                            if not row[1] and not drop_empty:
+                                break
+                            item = row[1]
                     if len(item): text_spans.append(item)
                     i, found = next(found_groups, (0, None))
                     if i != 0:
@@ -1509,6 +1533,8 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
             for row_inner in alines:
                 if len(attr_text):
                     if attr_text == row_inner[0]:
+                        if row_inner[1] == '' and not drop_empty:
+                            break
                         return match[0].replace(attr_text, row_inner[1])
             return match[0]
 
@@ -1922,6 +1948,8 @@ def main():
     parser.add_argument(
         "-remnl", help="Remove newlines from source strings", action="store_true")
     parser.add_argument(
+        "-drop", help="Remove originals if the translation is empty", action="store_true")
+    parser.add_argument(
         "-images", help="Process all image files", action="store_true")
     parser.add_argument(
         "-acolor", help="OCR color replacer for alpha channel (ex/def: #FFFFFF)", default="#FFFFFF", metavar=("alpha_color"))
@@ -2162,7 +2190,7 @@ def main():
                 text_to_translate = make_text_to_translate(l_orig_lines, translation_types)
 
                 #print(PROGRESS_CHAR, end='', flush=True)
-                if not self._first_time_translate:
+                if not self._first_time_translate and l_orig != 1:
                     self.wait()
                 else:
                     self._first_time_translate = False
@@ -2462,8 +2490,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        pass
-
+    main()

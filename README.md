@@ -33,11 +33,13 @@ options:
   -cm cut_mark         Cut-mark string or character
   -nomerge             Don't merge partial sequential strings during translation
   -remnl               Remove newlines from source strings
+  -drop                Remove originals if the translation is empty
   -images              Process all image files
   -acolor alpha_color  OCR color replacer for alpha channel (ex/def: #000000)
   -svg [svg_params]    Generate SVGs with positioned text for each OCR result
   -dist box_dist       Maximal horizontal/vertical distances to merge OCR textboxes (ex: 10,10)
   -font cut_font_info  Default font for pixel width measurement when -cut >128 (ex/def: msgothic.ttc,24)
+  -bin bin_exts        Binary file extensions (ex/def: .exe,.dll)
 
 file regexps:
   -ra attr_regexp      RegExp for attributes
@@ -171,7 +173,8 @@ The program is currently sensitive to line separator type so there should be onl
 0. Extract translatable strings into a DSV file; its format is: `original→translation[→context→[hex offset][,encoding[,escaped filler char like \x20]]]`
 1. Create additional line in `game_regexps.csv` (example: `game_1→utf-16le→*.exe→→→`)
 2. Optionally create `game_1.project` to automate game engine selection if only .exe is translated.
-3. Run `filetranslate -g game_1 -a` or `filetranslate -a` if you created the project file
+3. Optionally specify binary extensions with `-bin` parameter like `-bin ".resource"`.
+4. Run `filetranslate -g game_1 -a` or `filetranslate -a` if you created the project file.
 
 ## Translation update steps
 
