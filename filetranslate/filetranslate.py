@@ -1,13 +1,15 @@
 ﻿# -*- coding: utf-8 -*-
-# The project requires Python 3.7 at the least
-
 import os, sys
+MODULE_NAME = "filetranslate"
+if sys.version_info[:2] < (3, 10):
+    print(f"Error: {MODULE_NAME} expects Python 3.10 to run")
+    sys.exit(2)
 from typing import Tuple, List
 # add curent file's directory to path to include modules from the same folder
 sys.path.append(os.path.dirname(__file__))
 
-import re, argparse, textwrap, html, hashlib, datetime
-import itertools, functools, pathlib, fnmatch
+import re, argparse, textwrap, hashlib, datetime
+import itertools, functools, fnmatch
 from shutil import move#, copyfile
 from time import sleep
 from PIL import Image, ImageFont
@@ -16,25 +18,6 @@ from language_fn import *
 from service_fn import *
 from math import isnan
 
-if os.name == 'nt': # Enable ANSI console escape codes without colorama
-    from ctypes import windll
-    k = windll.kernel32
-    k.SetConsoleMode(k.GetStdHandle(-11), 7)
-
-#from multiprocessing import Process
-
-ENABLE_PROFILER = False
-if ENABLE_PROFILER:
-    import cProfile
-    def profile_func(origin_func, *args, **kwargs):
-        with cProfile.Profile() as prof:
-            ret = prof.runcall(origin_func, *args, **kwargs)
-            prof.print_stats()
-            return ret
-else:
-    def profile_func(origin_func, *args, **kwargs):
-        return origin_func(*args, **kwargs)
-
 
 MAX_BORDER_TAGS = 4
 MIN_INFILE_INTERSECTIONS = 2
@@ -42,33 +25,44 @@ MIN_LENGTH = 1 # minimum text length of all strings in a translation file
 COMMENT_TAG = "//"
 DEFAULT_CUT_FONT = ("msgothic.ttc", 24)
 
-ENABLE_CACHE = False
-cache = None
+ENABLE_CACHE = True  # change this to manually set the state
 CACHE_EXPIRY_TIME = None #3*24*60*60
 TRANSLATION_BAN_DELAY = 60 * 60
 CACHE_MIN_TEXT_LENGTH = 2
 
-USE_GIT = False
+USE_GIT = True # change this to manually set the state
 GIT_AUTHOR = None
+
+IS_WINDOWS = os.name == 'nt'
+
+if IS_WINDOWS: # Enable ANSI console escape codes without colorama
+    from ctypes import windll
+    k = windll.kernel32
+    k.SetConsoleMode(k.GetStdHandle(-11), 7)
 
 import hashlib
 md5 = hashlib.md5
+
+from enum import IntEnum
+class TransNum(IntEnum):
+    googlet = 1
+    sugoi = 2
+
+try:
+    if USE_GIT:
+        import git
+        from git import RemoteProgress
+        GIT_AUTHOR = git.Actor(MODULE_NAME, "@filetranslate")
+except:
+    USE_GIT = False
+
+CACHE_DIR = "__pycache__"
+cache = None
 try:
     from diskcache import Cache
-    ENABLE_CACHE = True # change this to manually set the state
+    cache = Cache(CACHE_DIR)
 except ImportError:
-    pass
-
-#from ocrspace import OCRspace as OCRservice
-
-MODULE_NAME = "filetranslate"
-try:
-    import git
-    from git import RemoteProgress
-    GIT_AUTHOR = git.Actor(MODULE_NAME, "@filetranslate")
-    USE_GIT = True # change this to manually set the state
-except:
-    pass
+    ENABLE_CACHE = False
 
 from pkg_resources import get_distribution
 VERSION_STR = datetime.datetime.fromtimestamp(1600708851).strftime("%y.%m")
@@ -91,7 +85,7 @@ DICTIOANRY_FILE = "dictionary.csv"
 DEFAULT_OUT_DIR = "translation_out"
 PROJECT_EXT = ".project"
 GIT_INCLUDE_FILES = ["*.csv", "*.project", "*.svg"]
-EXLUDED_DIRS = set([".git", ".vscode", ".backup", "__pycache__", "to_compare", "[Originals]", DEFAULT_OUT_DIR])
+EXLUDED_DIRS = set([".git", ".vscode", ".backup", CACHE_DIR, "to_compare", "[Originals]", DEFAULT_OUT_DIR])
 
 # processing RegExps
 PUNCTUATION_OTHER = ' "\t\u0020\u3000/\\'
@@ -101,14 +95,13 @@ PUNCTUATION_JPN_START_RE='[' + PUNCTUATION_OTHER + PUNCTUATION_JPN_START + ']*'
 PUNCTUATION_JPN_END = '｝〉》」’”ー' #］』】
 PUNCTUATION_JPN_END_RE='[' + PUNCTUATION_OTHER + PUNCTUATION_JPN_END + ']*'
 
+STRINGS_NAME = "strings"
+ATTRIBUTES_NAME = "attributes"
+STRINGS_DB_POSTFIX = f"_{STRINGS_NAME}.csv"
+ATTRIBUTES_DB_POSTFIX = f"_{ATTRIBUTES_NAME}.csv"
 
 TEXT_RE_SPLITTER = '|<===>|'
 UNICODE_ESCAPE_RE = r'\\u[A-Fa-f\d]{4}'
-
-STRINGS_NAME = "strings"
-ATTRIBUTES_NAME = "attributes"
-STRINGS_DB_POSTFIX = "_" + STRINGS_NAME + ".csv"
-ATTRIBUTES_DB_POSTFIX = "_" + ATTRIBUTES_NAME + ".csv"
 LOOKBEHIND_LINES = 10
 
 def get_primary_color(pa, x1, x2, y1, y2):
@@ -235,6 +228,10 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
     """Moves translated text to indexed_array's items' [3][k][1] (main text element of each string) with overwrite.
     """
     original_indexes = kwargs.get("original_indexes", [])
+    preformat_str = kwargs.get("preformat_str", [])
+    preformat_re = None
+    if preformat_str:
+        preformat_re = re.compile(preformat_str.replace('%s', '(.+)'))
 
     partial_l = len(original_indexes)
     translations_l = len(translations_arr)
@@ -259,7 +256,11 @@ def revert_text_to_indexed_array(translations_arr, indexed_array, **kwargs):
         skip = False
         for k in range(lines_originally):
             if indexed_array[j][3][k][1] is None or len(indexed_array[j][3][k][1]) == 0: continue
-            cur_tmp = tmp[k].strip()
+            cur_tmp: str = tmp[k].strip()
+            if preformat_str:
+                preformatted = preformat_re.split(cur_tmp)
+                if len(preformatted) > 2:
+                    cur_tmp = ''.join(preformatted[2:])
             if len(cur_tmp) > 0:
                 indexed_array[j][3][k][1] = cur_tmp
             elif lines_originally == 1:
@@ -320,20 +321,23 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     if not os.path.isfile(file_name):
         return 0
 
-    j = 0
-    translated_lines = 0
     num_tled_lines = 0
     num_tled_lines_new = 0
-    untl_lines = []
+    untranslated_lines = []
+    global cache
 
+    # Basic csv file integrity and translation status verification
     with open(file_name, 'r', newline='', encoding=CSV_ENCODING) as f:
-        allines = csv.reader(f, DIALECT_TRANSLATION)
-        untl_lines = [bool(
-                len(line) < 2 or not line[1] or len(line[1]) == 0
-            ) for line in allines]
-    if not all(untl_lines) and not upgrade:
+        for i, line in enumerate(csv.reader(f, DIALECT_TRANSLATION)):
+            if len(line) == 0:
+                print(f"Empty line found at row {i} of {file_name}")
+            elif len(line) == 1:
+                print(f"Corrupted line at row {i} of {file_name}: {line[0]} (check dropped {ESCAPE_CHAR} escapes or {DELIMITER_CHAR})")
+            untranslated_lines.append(bool(len(line) < 2 or not line[1] or len(line[1]) == 0))
+
+    if not all(untranslated_lines) and not upgrade:
         return 0
-    if not any(untl_lines) and upgrade:
+    if not any(untranslated_lines) and upgrade:
         return 0
 
     max_chars = trn_svc.get_char_limit()
@@ -343,8 +347,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
     with open(file_name, mode="r", encoding=CSV_ENCODING) as f:
         reader_ind = None
         print_progress(0, 100)
-        if ENABLE_CACHE:
-            cache = Cache("__pycache__")
+        if ENABLE_CACHE and cache:
             if not upgrade:
                 reader_ind = cache.get(file_name)
         if reader_ind is None:
@@ -374,6 +377,7 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
         changed_lines = 0
         ttype = 0
         merge_ender_re = merge_nostarter_re = merge_noendtag_re = None
+        context = ''
 
         print_progress(1, 100, type_of_progress=4)
         if self.re_mergeque:
@@ -395,7 +399,14 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
             if reader_ind[i][2][:2] == COMMENT_TAG:
                 repl_line = repl_line[2:]
                 #continue
-            if upgrade: upgraded_lines.append(i)
+            if upgrade:
+                upgraded_lines.append(i)
+
+            if self.preformat and len(reader_ind[i]) > 5:
+                if (reader_ind[i][5] or reader_ind[i][5] == '') and context != reader_ind[i][5]:
+                    context = reader_ind[i][5]
+                if context.strip():
+                    repl_line = self.preformat % (context, repl_line) # NOTE: preformat str must contain 2x %s
 
             # NOTE: Additional replacements should be done in a translation service class
             # or with translation_in. Batch translation in parts below max_chars:
@@ -476,7 +487,6 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
                 last_size += repl_line_len
 
             changed_lines += 1
-            translated_lines = changed_lines
             if changed_lines % progress_divisor == 0:
                 print_progress(
                     changed_lines,
@@ -491,7 +501,8 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
         print_progress(100, 100)
         return 0
 
-    reader_ind = revert_text_to_indexed_array(translated, reader_ind, original_indexes=upgraded_lines)
+    reader_ind = revert_text_to_indexed_array(
+        translated, reader_ind, original_indexes=upgraded_lines, preformat_str=self.preformat)
     num_tled_lines_new = len(reader_ind)
     try:
         num_tled_lines_new = sum(1 for row in reader_ind if (
@@ -511,11 +522,11 @@ def translateCSV(self, trn_svc, file_name, type_str=True, upgrade=False):
 
     return num_tled_lines_new - num_tled_lines if num_tled_lines_new > num_tled_lines else num_tled_lines_new
 
-def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(0,0,0), make_svg=0, min_dist=(10,10)):
+def process_image(ocr_svc, file_name, invert=False, binarize=False, alphacolor=(0,0,0), make_svg=0, min_dist=(10,10), name_duplicate=False):
     """ Creates OCR texts database file from a game image.
     """
     onlyName = os.path.splitext(file_name)[0]
-    if make_svg or has_duplicates(onlyName):
+    if make_svg or name_duplicate:
         # needs extension since it certainly duplicates name of the image
         ocr_strings_fn = file_name  + STRINGS_DB_POSTFIX
     else:
@@ -611,19 +622,21 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
 
             for i, line in enumerate(str_list):
                 trn = ''
+                ctx = ''
                 is_commented = False
                 if upgrade and old_list:
-                    for old_line in old_list:
-                        is_commented = (COMMENT_TAG + line) == old_line[0]
-                        if line == old_line[0] or is_commented:
-                            trn = old_line[1]
-                            if is_string: old_list.remove(old_line)
+                    for old_row in old_list:
+                        is_commented = (COMMENT_TAG + line) == old_row[0]
+                        if line == old_row[0] or is_commented:
+                            trn = old_row[1]
+                            if len(old_row) > 2: ctx = old_row[2]
+                            if is_string: old_list.remove(old_row)
                             break
 
                 newline = COMMENT_TAG + line if is_commented else line
                 if have_contexts and is_string:
                     # TODO: set other translator columns after context for readability?
-                    writer.writerow([newline, trn, contexts[i]])
+                    writer.writerow([newline, trn, ctx if ctx else contexts[i]])
                 else:
                     writer.writerow([newline, trn])
         return True
@@ -694,8 +707,6 @@ def _makeComparisonTranslation(self, file_name_base, file_name_translated, name_
     stringsB = []
     attributesT = []
     stringsT = []
-    contextsB = []
-    contextsT = []
     ret = True
 
     contentB = None
@@ -883,7 +894,7 @@ def _get_str_len(text, is_px_width=False, fontname=DEFAULT_CUT_FONT[0], fontsize
     """Returns string length either in pixels or in characters."""
     global MEASURED_FONT
     if not MEASURED_FONT and is_px_width:
-        if ':' not in fontname:
+        if IS_WINDOWS and ':' not in fontname:
             fontname = os.path.join(os.environ["WINDIR"], "fonts", fontname)
         MEASURED_FONT = ImageFont.truetype(fontname, fontsize)
     if is_px_width:
@@ -949,20 +960,21 @@ def _applyCutMarks(self, interval:int=40, cut_chrs=CUT_CHARACTER, mind_chr=SPACE
                     tmp_str_len = _get_str_len(tmp_str, is_px_width, font_name, font_size)
                     mnd_chr_len = len(mind_chr)
                     def find_pos(measure_str, max_pos, _by_pixels=False):
-                            if _by_pixels:
+                        orig_len = len(measure_str)
+                        if _by_pixels:
+                            pos = len(measure_str)
+                            while pos and _get_str_len(measure_str, True, font_name, font_size) > max_pos:
+                                measure_str = measure_str[:-1]
                                 pos = len(measure_str)
-                                while pos and _get_str_len(measure_str, True, font_name, font_size) > max_pos:
-                                    measure_str = measure_str[:-1]
-                                    pos = len(measure_str)
-                            else:
-                                pos = max_pos
-                            return pos
+                        else:
+                            pos = max_pos
+                        return min(pos, orig_len)
                     _interval = find_pos(tmp_str, interval, is_px_width)
                     while tmp_str_len > interval:
                         where = find_pos(tmp_str, interval, is_px_width)
                         if (mind_chr is not None):
                             where_rspace = tmp_str[:_interval].rfind(mind_chr)
-                            if where_rspace < 2 or tmp_str[_interval - 1] in PUNCTUATION_EN:
+                            if where_rspace < 2 or _interval <= len(tmp_str) and tmp_str[_interval - 1] in PUNCTUATION_EN:
                                 where_rspace = _interval
                             where = min(_interval, where_rspace)
                             tmp = tmp_str[:where]
@@ -1102,15 +1114,18 @@ def _makeDictionary(self, check_type=2, csv_files=[]):
     print("found", len(new_dictionary), "words.\nWriting dictionary as: " + dct_file)
     write_csv_list(dct_file, new_dictionary)
 
-def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None, repl_cond=None, excl_cond=None):
-    """ Replaces by RegExp in translations.
-    """
+def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None, repl_cond=None, excl_cond=None, context_cond=None):
+    """ Replaces by RegExp in translations."""
+
+    if not old_re: return 0
     is_changed = False
     a_file_l = read_csv_list(a_file)
     if repl_cond:
         repl_cond = re.compile(repl_cond, re.M|re.U)
     if excl_cond:
         excl_cond = re.compile(excl_cond, re.M|re.U)
+    if context_cond:
+        context_cond = re.compile(context_cond, re.M|re.U)
     cnt = 0
     repl_file_l = None
     # precompile all regexps from replacers file
@@ -1123,6 +1138,8 @@ def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None, repl_
                     repl_file_l[i][2] = re.compile(repl[2], re.M|re.U)
                 if len(repl_file_l[i]) > 3 and repl[3]:
                     repl_file_l[i][3] = re.compile(repl[3], re.M|re.U)
+                if len(repl_file_l[i]) > 4 and repl[4]:
+                    repl_file_l[i][4] = re.compile(repl[4], re.M|re.U)
         else:
             repl_file_l = None
 
@@ -1131,16 +1148,25 @@ def _replaceInTranslations(self, a_file, old_re, new_repl, repl_file=None, repl_
 
         tmp = translation[1]
         if repl_file_l:
+            # using replacers file
             for repl in repl_file_l:
                 repl_cond = repl[2] if len(repl) > 2 and repl[2] else None
                 excl_cond = repl[3] if len(repl) > 3 and repl[3] else None
+                context_cond = repl[4] if len(repl) > 4 and repl[4] else None
                 if not repl_cond or (repl_cond and repl_cond.search(translation[0])):
                     if not excl_cond or (excl_cond and not excl_cond.search(translation[0])):
-                        tmp = repl[0].sub(repl[1], tmp)
+                        if context_cond is None:
+                            tmp = repl[0].sub(repl[1], tmp)
+                        elif context_cond is not None and len(translation) >2 and context_cond.search(translation[2]):
+                            tmp = old_re.sub(new_repl, tmp)
         else:
             if not repl_cond or (repl_cond and repl_cond.search(translation[0])):
                 if not excl_cond or (excl_cond and not excl_cond.search(translation[0])):
-                    tmp = old_re.sub(new_repl, tmp)
+                    if context_cond is None:
+                        tmp = old_re.sub(new_repl, tmp)
+                    elif context_cond is not None and len(translation) >2 and context_cond.search(translation[2]):
+                        # if context provided we will not replace items without one
+                        tmp = old_re.sub(new_repl, tmp)
 
         if tmp != translation[1]:
             a_file_l[i][1] = tmp
@@ -1228,7 +1254,7 @@ def sort_by_first_column_length(arr):
     sorted_arr = sorted(arr, key=lambda x: len(x[0]), reverse=True)
     return sorted_arr
 
-def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
+def _applyTranslationsToBinary(self, file_name, mode=1, name_duplicate=False) -> bool:
     outputName = self.getOutputName(file_name)
     if not os.path.exists(file_name) or (os.path.exists(outputName) and not (self.use_game_dir or (mode & 2))):
         #print("skipped, already applied and not replacement mode or original missing", end='', flush=True)
@@ -1236,7 +1262,7 @@ def _applyTranslationsToBinary(self, file_name, mode=1) -> bool:
 
     splitName = os.path.splitext(file_name)
     onlyName = splitName[0]
-    if has_duplicates(onlyName):
+    if name_duplicate:
         onlyName = file_name
     translationsFile = onlyName + STRINGS_DB_POSTFIX
 
@@ -1336,7 +1362,7 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
     onlyExt = splitName[1].lower()
 
     if is_binary:
-        return self.applyTranslationsToBinary(file_name, mode)
+        return self.applyTranslationsToBinary(file_name, mode, name_duplicate=name_duplicate)
 
     # check if multilple files with only different ext exist
     if name_duplicate:
@@ -1595,16 +1621,40 @@ def _createRepo(self):
     r.index.commit("Initial commit", author=GIT_AUTHOR, committer=GIT_AUTHOR)
 
 
-class git_progress_print(RemoteProgress):
-    def update(self, op_code, cur_count, max_count=None, message=''):
-        print("\r%10s %03d %3d %3f %20s" % (op_code, cur_count, max_count, cur_count / (max_count or 100.0),
-                                            message or "NO MESSAGE"), end='', flush=True)
+if USE_GIT:
+    class git_progress_print(RemoteProgress):
+        def update(self, op_code, cur_count, max_count=None, message=''):
+            print("\r%10s %03d %3d %3f %20s" % (op_code, cur_count, max_count, cur_count / (max_count or 100.0),
+                                                message or "NO MESSAGE"), end='', flush=True)
 
-def _updateRepo(self, tag=None, add_new=False, to_origin=0, silent=True):
-    """Updates project files in its git repository."""
-    if not is_git_repo(self.work_dir): return
-    r = git.Repo(self.work_dir)
-    if not r.is_dirty():
+    def _updateRepo(self, tag=None, add_new=False, to_origin=0, silent=True):
+        """Updates project files in its git repository."""
+        if not is_git_repo(self.work_dir): return
+        r = git.Repo(self.work_dir)
+        if not r.is_dirty():
+            if to_origin == 2:
+                origin = r.remote("origin")
+                if not origin.exists():
+                    if self.remote_url:
+                        origin = r.create_remote("origin", self.remote_url)
+                    else:
+                        return
+                if origin.exists():
+                    for checkout_info in origin.fetch(progress=git_progress_print()):
+                        print("Updated %s to %s" % (checkout_info.ref, checkout_info.commit))
+                    print('')
+            return
+
+        #if tag:
+        #    r.create_tag(tag)
+        modified_files = [(item.change_type + ": " + item.a_path) for item in r.index.diff(None)]
+        if len(modified_files) and not silent:
+            print("  Modified files:\n   " + "\n   ".join(modified_files))
+
+        #r.git.add(update=True)
+        r.git.add(list(find_files(self.work_dir, GIT_INCLUDE_FILES)))
+        msg = ' '.join(filter(None, ["Update", tag, datetime.datetime.now().strftime("%d.%m.%Y") ]))
+        r.index.commit(msg, author=GIT_AUTHOR, committer=GIT_AUTHOR)
         if to_origin == 2:
             origin = r.remote("origin")
             if not origin.exists():
@@ -1613,56 +1663,33 @@ def _updateRepo(self, tag=None, add_new=False, to_origin=0, silent=True):
                 else:
                     return
             if origin.exists():
-                for checkout_info in origin.fetch(progress=git_progress_print()):
-                    print("Updated %s to %s" % (checkout_info.ref, checkout_info.commit))
-                print('')
-        return
-
-    #if tag:
-    #    r.create_tag(tag)
-    modified_files = [(item.change_type + ": " + item.a_path) for item in r.index.diff(None)]
-    if len(modified_files) and not silent:
-        print("  Modified files:\n   " + "\n   ".join(modified_files))
-
-    #r.git.add(update=True)
-    r.git.add(list(find_files(self.work_dir, GIT_INCLUDE_FILES)))
-    msg = ' '.join(filter(None, ["Update", tag, datetime.datetime.now().strftime("%d.%m.%Y") ]))
-    r.index.commit(msg, author=GIT_AUTHOR, committer=GIT_AUTHOR)
-    if to_origin == 2:
-        origin = r.remote("origin")
-        if not origin.exists():
-            if self.remote_url:
-                origin = r.create_remote("origin", self.remote_url)
-            else:
-                return
-        if origin.exists():
-            origin.set_tracking_branch(origin.refs.master)
-            origin.push()
+                origin.set_tracking_branch(origin.refs.master)
+                origin.push()
 
 
-def _revertRepo(self):
-    if not is_git_repo(self.work_dir): return
-    r = git.Repo(self.work_dir)
-    if r.is_dirty():
-        r.head.reset("HEAD", index=True, working_tree=True)
-        print("HEAD commit (%s)..." % r.head.commit.message.strip())
-    else:
-        r.head.reset("HEAD~1", index=True, working_tree=True)
-        print("previous commit (%s)..." % r.head.commit.message.strip())
+    def _revertRepo(self):
+        if not is_git_repo(self.work_dir): return
+        r = git.Repo(self.work_dir)
+        if r.is_dirty():
+            r.head.reset("HEAD", index=True, working_tree=True)
+            print("HEAD commit (%s)..." % r.head.commit.message.strip())
+        else:
+            r.head.reset("HEAD~1", index=True, working_tree=True)
+            print("previous commit (%s)..." % r.head.commit.message.strip())
 
 
-def _archiveRepo(self, fn="filetranslate"):
-    """Exports project's git repository to a zip archive."""
-    if not is_git_repo(self.work_dir): return
-    try:
-        fn = os.path.split(os.path.split(self.work_dir + os.sep)[0])[1]
-    except:
-        pass
-    self.updateRepo(tag="before archival")
-    fn += ".zip"
-    with open(os.path.join(self.work_dir, fn), "wb") as fp:
-        git.Repo(self.work_dir).archive(fp, format="zip")
-    return fn
+    def _archiveRepo(self, fn="filetranslate"):
+        """Exports project's git repository to a zip archive."""
+        if not is_git_repo(self.work_dir): return
+        try:
+            fn = os.path.split(os.path.split(self.work_dir + os.sep)[0])[1]
+        except:
+            pass
+        self.updateRepo(tag="before archival")
+        fn += ".zip"
+        with open(os.path.join(self.work_dir, fn), "wb") as fp:
+            git.Repo(self.work_dir).archive(fp, format="zip")
+        return fn
 
 
 class FileTranslate:
@@ -1670,7 +1697,8 @@ class FileTranslate:
     """
     def __init__(self, work_dir, img_exts, file_enc, re_a, re_s, re_t, re_a_sep, re_excl, re_mque,
                  game_dir=None, git_origin='', c_gn=0,
-                 has_t=False, has_ct=False, edquo=False, cap_a=False, strip_cmts=True, remove_newlines=True):
+                 has_t=False, has_ct=False, edquo=False, cap_a=False,
+                 strip_cmts=True, remove_newlines=True, preformat=None):
 
         self.re_a = re.compile(r'%s' % re_a, re.MULTILINE) if re_a else None
         self.re_s = re.compile(r'%s' % re_s, re.MULTILINE) if re_s else None
@@ -1679,6 +1707,7 @@ class FileTranslate:
         self.re_excl = re.compile(r'%s' % re_excl) if re_excl else None
         self.re_mergeque = re_mque if re_mque else None
         self.remove_newlines = remove_newlines
+        self.preformat = preformat
 
         self.has_text = False
         self.has_context = False
@@ -1719,10 +1748,11 @@ class FileTranslate:
     replaceInTranslations = _replaceInTranslations
     makeDictionary = _makeDictionary
     makeComparison = _makeComparisonTranslation
-    createRepo = _createRepo
-    updateRepo = _updateRepo
-    archiveRepo = _archiveRepo
-    revertRepo = _revertRepo
+    if USE_GIT:
+        createRepo = _createRepo
+        updateRepo = _updateRepo
+        archiveRepo = _archiveRepo
+        revertRepo = _revertRepo
 
 
 def find_files(dir_path: str=None, patterns: list[str]=None, exclude_files: list[str]=None) -> list[str]:
@@ -1867,6 +1897,51 @@ def make_text_to_translate(source_lines, translation_types):
                 filtered_lines += '\n'
     return filtered_lines
 
+def is_file_changed(file_path: str) -> bool:
+    global cache
+    if cache is None:
+        return True
+    mod_time = path.getmtime(file_path)
+    cached_mod_time = cache.get(file_path)
+    #print(f"{mod_time} {'==' if mod_time == cached_mod_time else '!='} {cached_mod_time} (cache) for {file_path}")
+    if cached_mod_time is None or mod_time != cached_mod_time:
+        cache.set(file_path, mod_time)
+        return True
+    return False
+
+def return_ony_changed(files: list):
+    filtered_files = []
+    duplicates = []
+    for file_name in files:
+        full_name = os.path.abspath(file_name)
+        base_name = os.path.splitext(file_name)[0]
+        has_duplicate = has_duplicates(base_name)
+        if has_duplicate:
+            base_name = full_name
+        str_path = f"{base_name}{STRINGS_DB_POSTFIX}"
+        atr_path = f"{base_name}{ATTRIBUTES_DB_POSTFIX}"
+
+        already_added = False # this is to populate the database of file/str/attr mtimes in one go
+        if path.isfile(full_name): # the file itself changed
+            if is_file_changed(full_name):
+                filtered_files.append(file_name)
+                duplicates.append(has_duplicate)
+                already_added = True
+        if path.isfile(str_path): # strings changed
+            if is_file_changed(str_path):
+                if not already_added:
+                    already_added = True
+                    filtered_files.append(file_name)
+                    duplicates.append(has_duplicate)
+        if path.isfile(atr_path): # attributes changed
+            if  is_file_changed(atr_path):
+                if not already_added:
+                    filtered_files.append(file_name)
+                    duplicates.append(has_duplicate)
+
+    return duplicates, filtered_files
+
+
 # ---------------------------------------------- plans -----------------------------------------------
 # TODO:
 # - [ ] Option to apply string cutting only in -a mode.
@@ -1879,6 +1954,7 @@ def main():
     text_exts = ["txt", "json"]
     def_pat = ','.join("*." + i for i in text_exts)
     img_exts = ["png", "jpg", "jpeg", "webp", "gif"]
+    global cache 
 
     # process .project file and read the game directory location if it's there
     for f in [f for f in os.listdir(working_dir) if os.path.isfile(f) and (
@@ -1962,6 +2038,9 @@ def main():
         help=f"Default font for pixel width measurement when -cut >128 (ex/def: {DEFAULT_CUT_FONT[0]+','+str(DEFAULT_CUT_FONT[1])})",
         metavar=("cut_font_info"))
     parser.add_argument("-bin", default=".exe,.dll",  help="Binary file extensions (ex/def: .exe,.dll)", metavar=("bin_exts"))
+    parser.add_argument("-pf_pat", default="%s: %s", help="Sets format for string pre-formatting with context (ex/def: %%s: %%s)", metavar=("preformat"))
+    parser.add_argument("-pf", action="store_true", help="Enables pre-formatting of strings sent to MTL to mix context in them")
+    parser.add_argument("-ts", action="store_true", help="Check .csv files for changes and process only changed")
 
     regroup = parser.add_argument_group("file regexps")
     regroup.add_argument("-ra", help="RegExp for attributes", default='', metavar=("attr_regexp"))
@@ -1973,10 +2052,11 @@ def main():
     optgroup.add_argument("-i", help="Initialize translation files", action="store_true")
     optgroup.add_argument("-u", help="Update translation files for new strings", action="store_true")
     optgroup.add_argument("-ocr", help="Perform text recognition for images (1: default, 2: invert, 4: binarize; can be sum)", type=int, nargs='?', const=1, default=0, metavar="OPT")
+    tn_opts = "(default:" + ','.join([f"{tn.value}={tn.name}" for tn in TransNum]) + ")"
     optgroup.add_argument(
-        "-t", help="Perform initial string translation", type=int, nargs='?', const=1, default=0, metavar="N")
+        "-t", help=f"Perform initial string translation {tn_opts}", type=int, nargs='?', const=1, default=0, metavar="MTL")
     optgroup.add_argument(
-        "-tu", help="Perform translation of new strings", type=int, nargs='?', const=1, default=0, metavar="N")
+        "-tu", help=f"Perform translation of new strings {tn_opts}", type=int, nargs='?', const=1, default=0, metavar="MTL")
     optgroup.add_argument(
         "-fix", help="Revert replacement tags and apply translation_dictionary_out to translation",
         action="store_true")
@@ -1996,15 +2076,17 @@ def main():
         "-rit", help="Replace text in translations by RegExp (used with -f or both -o and -n options)",
         action="store_true")
     replgroup.add_argument(
-        "-o", help="RegExp for old translated text", default='', metavar=("old_regexp"))
+        "-o", help="RegExp for old translated text", default=None, metavar=("old_regexp"))
     replgroup.add_argument(
         "-n", help="New translated text RegExp replacer", default='', metavar=("new_replacer"))
     replgroup.add_argument(
-        "-ifs", help="RegExp for replacement check vs original", default='', metavar=("orig_allow_re"))
+        "-ifs", help="RegExp for replacement check vs original", default=None, metavar=("orig_allow_re"))
     replgroup.add_argument(
-        "-exs", help="RegExp for exclusion check vs original", default='', metavar=("orig_block_re"))
+        "-exs", help="RegExp for exclusion check vs original", default=None, metavar=("orig_block_re"))
     replgroup.add_argument(
-        "-f", help="Replacers DSV database (ex: replacers.csv)", default='', metavar=("replacers_file"))
+        "-ifc", help="RegExp for check vs context", default=None, metavar=("context_re"))
+    replgroup.add_argument(
+        "-f", help="Replacers DSV database (ex: replacers.csv)", default=None, metavar=("replacers_file"))
 
     intsgroup = parser.add_argument_group("additional").add_mutually_exclusive_group()
     intsgroup.add_argument(
@@ -2019,9 +2101,9 @@ def main():
         "-dct", help="Make dictionary file from all original words (1:strings (def), 2:+attributes)",
         type=int, nargs='?', const=2, default=0, metavar="type")
     intsgroup.add_argument(
-        "-tdct", help="Translate dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
+        "-tdct", help="Translate dictionary file", type=int, nargs='?', const=1, default=0, metavar="MTL")
     intsgroup.add_argument(
-        "-tdctu", help="Update translation of dictionary file", type=int, nargs='?', const=1, default=0, metavar="N")
+        "-tdctu", help="Update translation of dictionary file", type=int, nargs='?', const=1, default=0, metavar="MTL")
     intsgroup.add_argument(
         "-csvm", help="Merge all csv's into a single file", action="store_true")
 
@@ -2098,6 +2180,7 @@ def main():
 
     if regexp_excl and is_translation:
         print("Exclusion option enabled, expression:\n  ", regexp_excl)
+
     if regexp_mque and is_translation:
         print("Merging option", ( "enabled, expression(s):\n  " +
             '\n  '.join(regexp_mque.split('||')) ) if do_merge else "disabled")
@@ -2118,20 +2201,27 @@ def main():
     if not os.path.exists(working_dir):
         raise Exception("Working directory does not exist: " + working_dir)
 
-
     MT = None
     if is_translation or app_args.tdct or app_args.tdctu:
         # MTL bans you if you free-use it faster than N (>5000) chars per T (>10) sec
         # The following methods to be implemented within a custom translator's class
+        n_trans = is_translation or app_args.tdct or app_args.tdctu
 
-        if ENABLE_CACHE:
-            cache = Cache("__pycache__")
-
-        from googletrans import Translator
-        print("Using native\033[1m Python Google\033[0m translator...")
+        if n_trans == TransNum.googlet:
+            from googletrans import Translator
+            print("Using native\033[1m Python Google\033[0m translator...")
+        elif n_trans == TransNum.sugoi:
+            from sugoitranslate import SugoiTranslate
+            print("Using \033[1mSugoi\033[0m translator...")
+            Translator = SugoiTranslate
+        else:
+            raise Exception("Unknown translator specified")
 
         if app_args.remnl:
-            print(" (No newlines in source strings)")
+            print(" (Newlines will be stripped from source strings)")
+
+        if app_args.pf_pat and app_args.pf:
+            print(f' (Strings will be formatted as "{app_args.pf_pat}" for the translator)')
 
         tr_dict_in = read_csv_list(os.path.join(working_dir, TRANSLATION_IN_DB))
 
@@ -2150,6 +2240,16 @@ def main():
                 return
             Translator.on_finish = on_finish
 
+        #define for external translators that don't support it
+        if not hasattr(Translator, "__enter__"):
+            def __enter__(self):
+                return self
+            MT.__enter__ = __enter__
+        if not hasattr(Translator, "__exit__"):
+            def __exit__(self, exc_type, exc_value, traceback):
+                return None
+            MT.__exit__ = __exit__
+
         Translator._first_time_translate = True
         if hasattr(Translator, "translate"):
             translate_old = Translator.translate
@@ -2160,9 +2260,9 @@ def main():
                 if len(text_to_translate.strip()) == 0: return (0, lines_array)
 
                 transl_text = ''
-                text_is_long = len(text_to_translate) > CACHE_MIN_TEXT_LENGTH
+                text_is_long_enough = len(text_to_translate) > CACHE_MIN_TEXT_LENGTH
                 text_block_hash = None
-                if ENABLE_CACHE and text_is_long:
+                if ENABLE_CACHE and text_is_long_enough:
                     text_block_hash = md5(text_to_translate.encode("utf-8")).hexdigest()
                     transl_text = cache.get(text_block_hash)
                     if transl_text is not None:
@@ -2197,10 +2297,11 @@ def main():
 
                 while True:
                     try:
-                        transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
+                        if n_trans == TransNum.googlet:
+                            transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest).text
+                        else:
+                            transl_text = translate_old(self, text_to_translate, src=lang_src, dest=lang_dest)
                         break
-                    except KeyboardInterrupt:
-                        del MT
                     except Exception as e:
                         print(str(e), end='\r')
                         sleep(TRANSLATION_BAN_DELAY)
@@ -2214,7 +2315,6 @@ def main():
                 l_tran = len(transl_text_full)
                 if l_orig != l_tran:
                     lines = ''
-                    sent_lines = text_to_translate.splitlines()
                     for i, line in enumerate(transl_text_full):
                         try:
                             lines += l_orig_lines[i]
@@ -2227,15 +2327,23 @@ def main():
                                     "new={l_tran}, error_translations.txt written.")
 
                 # if the translation result is shorter don't cache it, it's strange
-                if ENABLE_CACHE and (text_block_hash is not None) and text_is_long and (tr_txt_len > CACHE_MIN_TEXT_LENGTH):
-                    tagstr = 'gtrans'
+                if ENABLE_CACHE and (text_block_hash is not None) and text_is_long_enough and (tr_txt_len > CACHE_MIN_TEXT_LENGTH):
+                    tagstr = TransNum(n_trans).name
                     cache.set(text_block_hash, transl_text_full, expire=CACHE_EXPIRY_TIME, tag=tagstr)
 
                 return (1, transl_text_full)
+
             Translator.translate = translate_new
 
-        MT = Translator(raise_exception=True)
+        MT = None
+        if n_trans == TransNum.googlet:
+            MT = Translator(raise_exception=True)
+        elif n_trans == TransNum.sugoi:
+            MT = Translator(by_line=True)
+        else:
+            MT = Translator()
         print("Starting time: {}".format(datetime.datetime.now().strftime("%H:%M %d.%m.%Y")))
+
 
     OCR = None
     acolor = (255, 255, 255)
@@ -2284,7 +2392,8 @@ def main():
                        game_dir=app_args.gd,
                        git_origin=(app_args.url if USE_GIT else ''),
                        strip_cmts=True,
-                       remove_newlines=app_args.remnl)
+                       remove_newlines=app_args.remnl,
+                       preformat=app_args.pf_pat if app_args.pf else None)
 
     font_params = [DEFAULT_CUT_FONT[0], DEFAULT_CUT_FONT[1]]
     if app_args.cut:
@@ -2331,8 +2440,9 @@ def main():
             print("Translating dictionary... ")
         else:
             print("Updating dictionary translation... ")
-        res = FT.translateCSV(MT, os.path.join(working_dir, DICTIOANRY_FILE), False, app_args.tdctu)
-        MT.on_finish()
+        with MT as m:
+            res = FT.translateCSV(m, os.path.join(working_dir, DICTIOANRY_FILE), False, upgrade=app_args.tdctu)
+            #m.on_finish()
         return
 
     if USE_GIT:
@@ -2358,110 +2468,135 @@ def main():
 
     # Walks through directory structure looking for files matching patterns
     matchingFileList = list(find_files(working_dir, patterns, ["*"+STRINGS_DB_POSTFIX, "*"+ATTRIBUTES_DB_POSTFIX]))
+    if app_args.ts:
+        duplicateList, matchingFileList = return_ony_changed(matchingFileList)
+    else:
+        duplicateList = list([has_duplicates(os.path.splitext(file_name)[0]) for file_name in matchingFileList])
     totalCount = len(matchingFileList)
-    print("Found sources (" + ','.join(patterns) +'):', str(totalCount))
+    print("Found sources (" + ','.join(patterns) +'):', str(totalCount), "(in changed)" if app_args.ts else "")
 
     fileCount = 0
     fileAllCount = 0
     array_csv_attrs = []
     array_csv_strs = []
-    for currentFile in matchingFileList:
-        if not(os.path.isfile(currentFile) and os.access(currentFile, os.W_OK)):
-            print("WARNING: File doesn't exist or not accessible: " + currentFile)
-            continue
-        fileAllCount += 1
-        res = False
-        base_name = currentFile.replace(working_dir, '')
-        base_name_print = f"{base_name} ({fileAllCount} of {totalCount})"
-        currentFile = os.path.abspath(currentFile)
-        only_name = os.path.splitext(currentFile)[0]
-        if any((s in currentFile) for s in [os.path.basename(__file__), TRANSLATION_IN_DB, TRANSLATION_OUT_DB, INTERSECTIONS_FILE, GAME_REGEXP_DB, "replacers.csv", "requirements"]):
-            continue
+    if is_translation:
+        with MT as m:
+            for i, currentFile in enumerate(matchingFileList):
+                if not(os.path.isfile(currentFile) and os.access(currentFile, os.R_OK)):
+                    print("WARNING: File does not exist or not accessible: " + currentFile)
+                    continue
+                fileAllCount += 1
+                res = 0
+                base_name = currentFile.replace(working_dir, '')
+                base_name_print = f"{base_name} ({fileAllCount} of {totalCount})"
+                currentFile = os.path.abspath(currentFile)
+                only_name = os.path.splitext(currentFile)[0]
+                if any((s in currentFile) for s in [os.path.basename(__file__), TRANSLATION_IN_DB, TRANSLATION_OUT_DB, INTERSECTIONS_FILE, GAME_REGEXP_DB, "replacers.csv", "requirements"]):
+                    continue
 
+                if duplicateList[i]:
+                    only_name = currentFile
 
-        if (app_args.i or app_args.a) and (not FT.file_enc or FT.file_enc == ''):
-            FT.file_enc = detect_encoding(currentFile)
+                text = ''
+                if app_args.t: text = f"Translating {base_name_print} ...\n"
+                else: text = f"Updating translation of {base_name_print} ...\n"
+                print(text, end='', flush=True)
 
-        hasDuplicate = has_duplicates(only_name)
-        if hasDuplicate:
-            only_name = currentFile
+                res = FT.translateCSV(m, only_name + ATTRIBUTES_DB_POSTFIX, False, upgrade=app_args.tu)
+                res += FT.translateCSV(m, only_name + STRINGS_DB_POSTFIX, True, upgrade=app_args.tu)
+                if res:
+                    print("\033[F" + text.rstrip('\n') + ' ' + str(res) +' lines\n', end='', flush=True)
+                res = res > 0
+                if res:
+                    fileCount += 1
+    else:
+        for i, currentFile in enumerate(matchingFileList):
+            if not(os.path.isfile(currentFile) and os.access(currentFile, os.R_OK)):
+                print("WARNING: File doesn't exist or not accessible: " + currentFile)
+                continue
+            fileAllCount += 1
+            res = False
+            base_name = currentFile.replace(working_dir, '')
+            base_name_print = f"{base_name} ({fileAllCount} of {totalCount})"
+            currentFile = os.path.abspath(currentFile)
+            only_name = os.path.splitext(currentFile)[0]
+            if any((s in currentFile) for s in [os.path.basename(__file__), TRANSLATION_IN_DB, TRANSLATION_OUT_DB, 
+                        INTERSECTIONS_FILE, GAME_REGEXP_DB, "replacers.csv", "requirements"]):
+                continue
 
-        if app_args.a:
-            print("Applying translation to " + base_name_print + ' ')
-            is_bin = any(currentFile.endswith(ext) for ext in app_args.bin.split(','))
-            res = FT.applyTranslationsToFile(currentFile, mode=app_args.a, name_duplicate=hasDuplicate, is_binary=is_bin)
-        elif app_args.csvm:
-            print("Merging translations of " + base_name_print + ' ')
-            attr_name = only_name + ATTRIBUTES_DB_POSTFIX
-            a = False
-            if os.path.isfile(attr_name):
-                a = read_csv_list(attr_name)
-                array_csv_attrs += a
-                res = a and len(a) > 0
-            str_name = only_name + STRINGS_DB_POSTFIX
-            if os.path.isfile(str_name):
-                a = read_csv_list(str_name)
-                array_csv_strs += a
-                res |= a and len(a) > 0
-        elif app_args.cmp:
-            currentToCompare = currentFile.replace(base_name, f"\\to_compare{base_name}")
-            if os.path.exists(currentFile) and os.path.exists(currentToCompare):
-                print("Comparing with \\to_compare\\ " + base_name_print + ' ...\n', end='', flush=True)
-                res = FT.makeComparison(currentFile, currentToCompare, name_duplicate=hasDuplicate)
-        elif is_translation:
-            text = ''
-            if app_args.t: text = f"Translating {base_name_print} ...\n"
-            else: text = f"Updating translation of {base_name_print} ...\n"
-            print(text, end='', flush=True)
-            res = FT.translateCSV(MT, only_name + ATTRIBUTES_DB_POSTFIX, False, app_args.tu)
-            res += FT.translateCSV(MT, only_name + STRINGS_DB_POSTFIX, True, app_args.tu)
-            if res: # line up due to using progress bar on the line after
-                print("\033[F" + text.rstrip('\n') + ' ' + str(res) +' lines\n', end='', flush=True)
-            res = res > 0
-        elif app_args.ocr:
-            print('')
-            print("Performing OCR of " + base_name_print + ' : ', end='', flush=True)
-            res = process_image(OCR, currentFile, bool(app_args.ocr & 0b10), bool(app_args.ocr & 0b100), acolor, app_args.svg, tdist)
-        elif app_args.px or app_args.rx:
-            print("Fixing translation of " + base_name_print + ' ')
-            res = prepare_csv_excel(only_name + ATTRIBUTES_DB_POSTFIX, app_args.rx)
-            res = True if prepare_csv_excel(only_name + STRINGS_DB_POSTFIX, app_args.rx) else res
-        elif app_args.fix:
-            print("Fixing translation of " + base_name_print + ' ')
-            res = FT.applyFixesToTranslation(only_name, False, source_lang=lang_src)
-            res = True if FT.applyFixesToTranslation(only_name, source_lang=lang_src) else res
-        elif app_args.ca and app_args.gd:
-            print("Validating attributes of " + base_name_print, end='', flush=True)
-            res = strip_attr_matching_file(only_name + ATTRIBUTES_DB_POSTFIX, all_game_fn)
-            print('')
-        elif app_args.i or app_args.u:
-            print('')
-            if app_args.u:
-                print("Upgrading strings " + base_name_print + ' :', end='', flush=True)
+            if (app_args.i or app_args.a) and (not FT.file_enc or FT.file_enc == ''):
+                    FT.file_enc = detect_encoding(currentFile)
+
+            if duplicateList[i]:
+                only_name = currentFile
+
+            if app_args.a:
+                print("Applying translation to " + base_name_print + ' ')
+                is_bin = any(currentFile.endswith(ext) for ext in app_args.bin.split(','))
+                res = FT.applyTranslationsToFile(currentFile, mode=app_args.a, name_duplicate=duplicateList[i], is_binary=is_bin, drop_empty=app_args.drop)
+            elif app_args.csvm:
+                print("Merging translations of " + base_name_print + ' ')
+                attr_name = only_name + ATTRIBUTES_DB_POSTFIX
+                a = False
+                if os.path.isfile(attr_name):
+                    a = read_csv_list(attr_name)
+                    array_csv_attrs += a
+                    res = a and len(a) > 0
+                str_name = only_name + STRINGS_DB_POSTFIX
+                if os.path.isfile(str_name):
+                    a = read_csv_list(str_name)
+                    array_csv_strs += a
+                    res |= a and len(a) > 0
+            elif app_args.cmp:
+                currentToCompare = currentFile.replace(base_name, f"\\to_compare{base_name}")
+                if os.path.exists(currentFile) and os.path.exists(currentToCompare):
+                    print("Comparing with \\to_compare\\ " + base_name_print + ' ...\n', end='', flush=True)
+                    res = FT.makeComparison(currentFile, currentToCompare, name_duplicate=duplicateList[i])
+            elif app_args.ocr:
+                print('')
+                print("Performing OCR of " + base_name_print + ' : ', end='', flush=True)
+                res = process_image(OCR, currentFile, bool(app_args.ocr & 0b10), bool(app_args.ocr & 0b100), acolor, app_args.svg, tdist, duplicateList[i])
+                if fileAllCount % 100 == 0:
+                    # re-init; is there memory leak somewhere?
+                    OCR = PaddleOCR(use_angle_cls=True, lang=LANG_DICT[lang_src], debug=False, show_log=False)
+            elif app_args.px or app_args.rx:
+                print("Fixing translation of " + base_name_print + ' ')
+                res = prepare_csv_excel(only_name + ATTRIBUTES_DB_POSTFIX, app_args.rx)
+                res = True if prepare_csv_excel(only_name + STRINGS_DB_POSTFIX, app_args.rx) else res
+            elif app_args.fix:
+                print("Fixing translation of " + base_name_print + ' ')
+                res = FT.applyFixesToTranslation(only_name, False, source_lang=lang_src)
+                res = True if FT.applyFixesToTranslation(only_name, source_lang=lang_src) else res
+            elif app_args.ca and app_args.gd:
+                print("Validating attributes of " + base_name_print, end='', flush=True)
+                res = strip_attr_matching_file(only_name + ATTRIBUTES_DB_POSTFIX, all_game_fn)
+                print('')
+            elif app_args.i or app_args.u:
+                print('')
+                if app_args.u:
+                    print("Upgrading strings " + base_name_print + ' :', end='', flush=True)
+                else:
+                    print("Making strings " + base_name_print + ' :', end='', flush=True)
+                res = FT.makeTranslatableStrings(
+                    currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '', name_duplicate=duplicateList[i])
+            elif app_args.rit:
+                for csv_file in [(only_name + ATTRIBUTES_DB_POSTFIX), (only_name + STRINGS_DB_POSTFIX)]:
+                    tmp = FT.replaceInTranslations(
+                        csv_file, old_re, new_str, repl_file=app_args.f, repl_cond=app_args.ifs, excl_cond=app_args.exs, context_cond=app_args.ifc)
+                    if tmp > 0:
+                        print(f"Replaced {tmp} times in", csv_file.replace(working_dir, ''))
+                        res = True
             else:
-                print("Making strings " + base_name_print + ' :', end='', flush=True)
-            res = FT.makeTranslatableStrings(
-                currentFile, app_args.u, lang_src + "_ALL" if len(lang_src) else '', name_duplicate=hasDuplicate)
-        elif app_args.rit:
-            for csv_file in [(only_name + ATTRIBUTES_DB_POSTFIX), (only_name + STRINGS_DB_POSTFIX)]:
-                tmp = FT.replaceInTranslations(
-                    csv_file, old_re, new_str, repl_file=app_args.f, repl_cond=app_args.ifs, excl_cond=app_args.exs)
-                if tmp > 0:
-                    print(f"Replaced {tmp} times in", csv_file.replace(working_dir, ''))
-                    res = True
-        else:
-            print("Unexpected parameter combination, aborting...")
-            sys.exit(1)
-            break
-        if res:
-            fileCount += 1
+                print("Unexpected parameter combination, aborting...")
+                sys.exit(1)
+            if res:
+                fileCount += 1
     # end for currentFile in matchingFileList
 
     if app_args.csvm and fileCount > 0:
         write_csv_list("attributes_combinbed.csv", array_csv_attrs)
         write_csv_list("strings_combinbed.csv", array_csv_strs)
 
-    if MT is not None: MT.on_finish()
     print("\nTotal files passed             : " + str(fileCount))
 
     if USE_GIT and not app_args.nogit and not app_args.a:

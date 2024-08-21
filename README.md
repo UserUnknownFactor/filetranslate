@@ -40,6 +40,9 @@ options:
   -dist box_dist       Maximal horizontal/vertical distances to merge OCR textboxes (ex: 10,10)
   -font cut_font_info  Default font for pixel width measurement when -cut >128 (ex/def: msgothic.ttc,24)
   -bin bin_exts        Binary file extensions (ex/def: .exe,.dll)
+  -pf_pat preformat    Sets format for string pre-formatting with context (ex/def: %s: %s)
+  -pf                  Enables pre-formatting of strings sent to MTL to mix context in them
+  -ts                  Check .csv files for changes and process only changed
 
 file regexps:
   -ra attr_regexp      RegExp for attributes
@@ -65,6 +68,7 @@ replacement:
   -n new_replacer      New translated text RegExp replacer
   -ifs orig_allow_re   RegExp for replacement check vs original
   -exs orig_block_re   RegExp for exclusion check vs original
+  -ifc context_re      RegExp for check vs context
   -f replacers_file    Replacers DSV database (ex: replacers.csv)
 
 additional:
@@ -117,7 +121,7 @@ fill `translation_dictionary_out.csv` with proper replacements.
 1. Fix translations in `intersections.csv`.
 1. Perform `-isa` run to apply intersecting strings back to translation databases. Use 2 as the parameter to apply string translation file intersections.
 1. Revert tags, fix contexts, and apply `translation_dictionary_out.csv` using `-fix` option.
-1. Replace wrongly translated repeating words and phrases using `-rit` option supplying RegExp for original translated text in `-o` and replacement in `-n` options. Lines containing spaces should be double-quoted. You can also use `\uXXXX` Unicode escape codes for characters outside the console encoding. Additionally you can allow only on condition or prevent replacement based on the original untranslated string with optional `-ifs` and `-exs` options correspondingly.
+1. Replace wrongly translated repeating words and phrases using `-rit` option supplying RegExp for original translated text in `-o` and replacement in `-n` options. Lines containing spaces should be double-quoted. You can also use `\uXXXX` Unicode escape codes for characters outside the console encoding. Additionally you can allow only on condition or prevent replacement based on the original untranslated string with optional `-ifs`, `-ifc` and `-exs` options correspondingly.
 1. Manually fix the resulting translations in corresponding `.csv` files.
 1. Apply translations to the game files with `-a` parameter.
 

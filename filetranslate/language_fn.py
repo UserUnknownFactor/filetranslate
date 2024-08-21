@@ -56,7 +56,7 @@ kana_jpn = """
 ぎょ じょ びょ ぴょ き゚ょ
 """.replace(' ','').replace('\n','')
 
-ALL_JPN_RE= re.compile(r'[\u3041-\u3096]|[\u30A0-\u30FF]|[\u3400-\u4DB5\u4E00-\u9FCB\uF900-\uFA6A]|[\u2E80-\u2FD5]|[\uFF5F-\uFF9F]|[\u3000-\u303F]|[\u31F0-\u31FF\u3220-\u3243\u3280-\u337F]|[\uFF01-\uFF5E]|[\u2026-\u203B]', re.U)
+JP_ALL_RE= re.compile(r'[\u3041-\u3096]|[\u30A0-\u30FF]|[\u3400-\u4DB5\u4E00-\u9FCB\uF900-\uFA6A]|[\u2E80-\u2FD5]|[\uFF5F-\uFF9F]|[\u3000-\u303F]|[\u31F0-\u31FF\u3220-\u3243\u3280-\u337F]|[\uFF01-\uFF5E]|[\u2026-\u203B]', re.U)
 SPACE_JP = '\u3000'
 KANA_SFX = "あぁ うぅ おぉ いぃ えぇ ぶっ".replace(' ','')
 PUNCTUATION_RE = re.compile(r'([\.!?])')
@@ -92,7 +92,9 @@ def tag_hash(string, str_enc="utf-8", hash_len=7, use_digits=False, lang='JA'):
     d = sha1(string.encode(str_enc)).digest()
     s = ''
     n_chars = 26 + (10 if use_digits else 0)
-    a_letter = ord('ａ' if lang == 'JA' else 'a')
+    # when MTL doesn't understand mixed text offer full-width tags
+    #a_letter = ord('ａ' if lang == 'JA' else 'a')
+    a_letter = ord('a')
     capA_letter = ord(chr(a_letter).upper())
     for i in range(0, hash_len):
         x = d[i] % n_chars
@@ -108,12 +110,12 @@ def tag_hash(string, str_enc="utf-8", hash_len=7, use_digits=False, lang='JA'):
         #else:
             #s += chr(int(random() * 26))
 
-    endchar = '、' if lang == 'JA' else ','
+    endchar =  ',' #'、' if lang == 'JA' else ','
     # indentation and endline checks
     if re.search(r"\A(?:\/\/)?(?:\t+|\A[\u0020\u3000]{2,})", string):
-        endchar = '：' if lang == 'JA' else ':'
+        endchar = ':' # '：' if lang == 'JA' else ':'
     elif re.search(r"\.\s*$", string):
-        endchar = '！' if lang == 'JA' else '!'
+        endchar = '!' # '！' if lang == 'JA' else '!'
     return s + endchar
 
 
@@ -140,7 +142,7 @@ EN_ALL_RE = re.compile('^[\na-zA-Z0-9.,!?;:\"\'-=+()*&%$#@ ]+', re.U)
 def is_in_language(text: str, lang: str, check_all:bool = False) -> bool:
     """ Checks if string contains a text with the selected language."""
     if lang == "JA" or lang == "JA_ALL": # Japanese
-        return ALL_JPN_RE.search(text) is not None
+        return JP_ALL_RE.search(text) is not None
     elif lang == "EN" or lang == "EN_ALL": # English
         if check_all:
             return EN_ALL_RE.search(text) is not None
@@ -148,7 +150,7 @@ def is_in_language(text: str, lang: str, check_all:bool = False) -> bool:
             return EN_LETTERS_RE.search(text) is not None
     elif not lang or "ANY" in lang or "SKIP" in lang:
         return True
-    return False
+    return True
 
 def tokenize_japanese(text: str):
     # Makes Romaji out of a Japanese text.
