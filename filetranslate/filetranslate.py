@@ -614,34 +614,36 @@ def write_csv(file_name, str_list, is_string, upgrade=False, contexts=[]):
             if len(old_list):
                 print(" %d %s;" % (len(str_list), str_name), end='', flush=True)
         new_name = file_name + "_" + str_name + ".csv"
+
         if sum(len(n) for n in str_list) < MIN_LENGTH: return False
-        #try:
+
         with open(new_name, 'w', newline='', encoding=CSV_ENCODING) as f:
             writer = csv.writer(f, DIALECT_TRANSLATION)
             have_contexts = (len(contexts) == len(str_list))
 
             for i, line in enumerate(str_list):
                 trn = ''
-                ctx = ''
+                ctx = []
                 is_commented = False
                 if upgrade and old_list:
                     for old_row in old_list:
                         is_commented = (COMMENT_TAG + line) == old_row[0]
                         if line == old_row[0] or is_commented:
                             trn = old_row[1]
-                            if len(old_row) > 2: ctx = old_row[2]
+                            if len(old_row) > 2: ctx = old_row[2:]
                             if is_string: old_list.remove(old_row)
                             break
 
                 newline = COMMENT_TAG + line if is_commented else line
+                if ctx:
+                    have_contexts = True
                 if have_contexts and is_string:
-                    # TODO: set other translator columns after context for readability?
-                    writer.writerow([newline, trn, ctx if ctx else contexts[i]])
+                    context = ctx if ctx else ([contexts[i]] if contexts else [])
+                    assert isinstance(context, list), f"Wrong context in {new_name} @ {i}"
+                    writer.writerow([newline, trn] + context)
                 else:
                     writer.writerow([newline, trn])
         return True
-        #except:
-        #    print("ERROR: Cann't access file for writing: " + new_name)
     return False
 
 
@@ -783,6 +785,8 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_dup
         if not content:
             return 0
 
+        content = "\n" + content + "\n"
+
         # find attributes
         if self.re_a:
             for match in self.re_a.finditer(content):
@@ -838,6 +842,7 @@ def _makeTranslatableStrings(self, file_name, upgrade=False, lang="JA", name_dup
                         if self.has_context:
                             ctx = match.group("context")
                             contexts.append(ctx if ctx else '')
+
                         j += 1
 
     if len(attributes) == 0 and len(strings) == 0: return False
@@ -1954,7 +1959,7 @@ def main():
     text_exts = ["txt", "json"]
     def_pat = ','.join("*." + i for i in text_exts)
     img_exts = ["png", "jpg", "jpeg", "webp", "gif"]
-    global cache 
+    global cache
 
     # process .project file and read the game directory location if it's there
     for f in [f for f in os.listdir(working_dir) if os.path.isfile(f) and (
@@ -2520,7 +2525,7 @@ def main():
             base_name_print = f"{base_name} ({fileAllCount} of {totalCount})"
             currentFile = os.path.abspath(currentFile)
             only_name = os.path.splitext(currentFile)[0]
-            if any((s in currentFile) for s in [os.path.basename(__file__), TRANSLATION_IN_DB, TRANSLATION_OUT_DB, 
+            if any((s in currentFile) for s in [os.path.basename(__file__), TRANSLATION_IN_DB, TRANSLATION_OUT_DB,
                         INTERSECTIONS_FILE, GAME_REGEXP_DB, "replacers.csv", "requirements"]):
                 continue
 
