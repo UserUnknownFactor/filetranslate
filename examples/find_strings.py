@@ -9,6 +9,7 @@ def read_binary_file(file_path):
         if b'.text' in section.Name:
             code_section = section
             break
+    code_section_va = 0
     if code_section is not None:
         code_section_va = code_section.VirtualAddress
         code_section_size = code_section.SizeOfRawData
@@ -20,9 +21,9 @@ def read_binary_file(file_path):
         if code_section_end:
             print(f"Skipping to 0x{code_section_end:X}")
         file.seek(code_section_end)
-        return file.read()
+        return code_section_end, file.read()
 
-def extract_strings(data, encoding):
+def extract_strings(data, encoding, offset):
     if 'utf-16' in encoding:
         delimiter = b'\x00\x00'
         min_length = 8  # Minimum length for UTF-16LE (including null-terminator)
@@ -40,7 +41,7 @@ def extract_strings(data, encoding):
             try:
                 string = data[start:end].decode(encoding)
                 if validate_string(string):
-                    strings.append(string.replace('\r', '\\r').replace('\n', '¶\n') + '→')
+                    strings.append(string.replace('\r', '\\r').replace('\n', '¶\n') + '→→' + str(offset+start))
             except UnicodeDecodeError:
                 pass
         start = end + len(delimiter)
@@ -52,6 +53,7 @@ def validate_string(string):
     
 # Usage example:
 file_path = 'file.exe'
-strings = extract_strings(read_binary_file(file_path), 'utf-16le')
+offset, data = read_binary_file(file_path)
+strings = extract_strings(data, 'utf-16le', offset)
 with open("strings.txt", "w", encoding="utf-8-sig") as o:
     o.write("\n".join(strings))
