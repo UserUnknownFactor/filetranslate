@@ -1398,12 +1398,18 @@ def _applyTranslationsToFile(self, file_name, mode=1, name_duplicate=False, is_b
     out_dict = read_csv_list(os.path.join(self.work_dir, TRANSLATION_OUT_DB))
 
     torg_text = u''
-    is_win_linenedings = False
 
+    # detect Windows line endings, we will restore them at the end
+    is_win_linenedings = False
     with open(file_name, mode="rb") as torg:
-        if b"\r\n" in torg.read():
+        test = torg.read()
+        encoding = self.file_enc.lower()
+        if encoding == "utf-8-sig" or encoding == "utf8-sig": encoding = "utf-8"
+        elif encoding == "utf-16" or encoding == "utf16": encoding = "utf-16le"
+        elif encoding == "utf-32" or encoding == "utf32": encoding = "utf-32le"
+        if "\r\n".encode(encoding) in test:
             is_win_linenedings = True
-            #print("found Windows' newlines")
+            #print(f"found Windows-style newlines {encoding}")
 
     with open(file_name, mode="r", encoding=self.file_enc) as torg:
         torg_text = torg.read()
@@ -2214,10 +2220,10 @@ def main():
 
         if n_trans == TransNum.googlet:
             from googletrans import Translator
-            print("Using native\033[1m Python Google\033[0m translator...")
+            print(f"Using native\033[1m Python Google\033[0m translator {lang_src}->{lang_dest}...")
         elif n_trans == TransNum.sugoi:
             from sugoitranslate import SugoiTranslate
-            print("Using \033[1mSugoi\033[0m translator...")
+            print(f"Using \033[1mSugoi\033[0m translator {lang_src}->{lang_dest}...")
             Translator = SugoiTranslate
         else:
             raise Exception("Unknown translator specified")
