@@ -64,10 +64,15 @@ try:
 except ImportError:
     ENABLE_CACHE = False
 
-from pkg_resources import get_distribution
+import datetime
+from importlib.metadata import version, PackageNotFoundError
+
 VERSION_STR = datetime.datetime.fromtimestamp(1600708851).strftime("%y.%m")
-if get_distribution(MODULE_NAME):
-    VERSION_STR = get_distribution(MODULE_NAME).version
+
+try:
+    VERSION_STR = version(MODULE_NAME)
+except PackageNotFoundError:
+    pass
 
 CUT_CHARACTER = '✂' #\u2702
 PROGRESS_CHAR = '•' #\u2022
